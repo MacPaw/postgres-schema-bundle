@@ -25,7 +25,7 @@ Enable the bundle by adding it to the list of registered bundles in ```config/bu
 return [
     // ...
     Macpaw\SchemaContextBundle\SchemaContextBundle::class => ['all' => true],
-    \Macpaw\PostgresSchemaBundle\PostgresSchemaBundle::class => ['all' => true],
+    Macpaw\PostgresSchemaBundle\PostgresSchemaBundle::class => ['all' => true],
 ];
 ```
 
