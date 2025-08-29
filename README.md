@@ -25,7 +25,7 @@ Enable the bundle by adding it to the list of registered bundles in ```config/bu
 return [
     // ...
     Macpaw\SchemaContextBundle\SchemaContextBundle::class => ['all' => true],
-    Macpaw\SchemaContextBundle\PostgresSchemaBundle::class => ['all' => true],
+    \Macpaw\PostgresSchemaBundle\PostgresSchemaBundle::class => ['all' => true],
 ];
 ```
 
@@ -42,12 +42,12 @@ doctrine:
                 wrapper_class: Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection
 ```
 
-Set `SchemaResolver` to `SchemaConnection` at kernel boot
+Set `BaggageSchemaResolver` to `SchemaConnection` at kernel boot
 ```php
 # src/Kernel.php
 
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
-use Macpaw\SchemaContextBundle\Service\SchemaResolver;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
 
@@ -60,7 +60,7 @@ class Kernel extends BaseKernel
         parent::boot();
     
         SchemaConnection::setSchemaResolver(
-            $this->getContainer()->get(SchemaResolver::class),
+            $this->getContainer()->get(BaggageSchemaResolver::class),
         );
     }
 
