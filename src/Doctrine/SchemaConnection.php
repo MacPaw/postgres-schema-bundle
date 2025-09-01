@@ -7,13 +7,13 @@ namespace Macpaw\PostgresSchemaBundle\Doctrine;
 use Doctrine\DBAL\Connection as DBALConnection;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
-use Macpaw\SchemaContextBundle\Service\SchemaResolver;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 
 class SchemaConnection extends DBALConnection
 {
-    private static ?SchemaResolver $schemaResolver = null;
+    private static ?BaggageSchemaResolver $schemaResolver = null;
 
-    public static function setSchemaResolver(SchemaResolver $resolver): void
+    public static function setSchemaResolver(BaggageSchemaResolver $resolver): void
     {
         self::$schemaResolver = $resolver;
     }
