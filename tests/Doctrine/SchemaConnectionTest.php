@@ -13,7 +13,7 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
-use Macpaw\SchemaContextBundle\Service\SchemaResolver;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\TestCase;
 
 class SchemaConnectionTest extends TestCase
@@ -39,7 +39,7 @@ class SchemaConnectionTest extends TestCase
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('fetchOne')->willReturn(true);
 
-        $resolver = new SchemaResolver();
+        $resolver = new BaggageSchemaResolver();
 
         $resolver->setSchema('test_schema');
 
@@ -59,7 +59,7 @@ class SchemaConnectionTest extends TestCase
         $driver->method('connect')->willReturn($driverConnection);
 
         $connection = new SchemaConnection([], $driver, new Configuration());
-        $resolver = new SchemaResolver();
+        $resolver = new BaggageSchemaResolver();
 
         SchemaConnection::setSchemaResolver($resolver);
 
@@ -83,7 +83,7 @@ class SchemaConnectionTest extends TestCase
 
         $connection->method('getDatabasePlatform')->willReturn($platform);
 
-        $resolver = new SchemaResolver();
+        $resolver = new BaggageSchemaResolver();
 
         $resolver->setSchema('test_schema');
 

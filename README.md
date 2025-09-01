@@ -23,10 +23,10 @@ Enable the bundle by adding it to the list of registered bundles in ```config/bu
 <?php
 
 return [
-            Macpaw\SchemaContextBundle\SchemaContextBundle::class => ['all' => true],
-            Macpaw\SchemaContextBundle\PostgresSchemaBundle::class => ['all' => true],
-        // ...
-    ];
+    // ...
+    Macpaw\SchemaContextBundle\SchemaContextBundle::class => ['all' => true],
+    Macpaw\PostgresSchemaBundle\PostgresSchemaBundle::class => ['all' => true],
+];
 ```
 
 ## Configuration
@@ -41,6 +41,33 @@ doctrine:
             default:
                 wrapper_class: Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection
 ```
+
+Set `BaggageSchemaResolver` to `SchemaConnection` at kernel boot
+```php
+# src/Kernel.php
+
+use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
+use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
+use Symfony\Component\HttpKernel\Kernel as BaseKernel;
+
+class Kernel extends BaseKernel
+{
+    use MicroKernelTrait;
+
+    public function boot(): void
+    {
+        parent::boot();
+    
+        SchemaConnection::setSchemaResolver(
+            $this->getContainer()->get(BaggageSchemaResolver::class),
+        );
+    }
+
+    // ...
+}
+```
+
 Make sure you configure the context bundle properly:
 
 See https://github.com/MacPaw/schema-context-bundle/blob/develop/README.md
