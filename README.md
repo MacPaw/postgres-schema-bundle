@@ -58,7 +58,7 @@ class Kernel extends BaseKernel
     public function boot(): void
     {
         parent::boot();
-    
+
         SchemaConnection::setSchemaResolver(
             $this->getContainer()->get(BaggageSchemaResolver::class),
         );
@@ -86,7 +86,59 @@ schema_context:
 * When Doctrine connects to PostgreSQL, it sets the search_path to the specified schema.
 * If the schema does not exist or DB is not PostgreSQL, an exception is thrown.
 
-## Testing 
+## Optional Commands
+
+The bundle provides three optional commands for schema management that can be registered in your services configuration:
+
+### Schema Drop Command
+Drops a PostgreSQL schema and all its objects:
+
+```yaml
+# config/services.yaml
+services:
+    SharedServices\Command\Doctrine\DoctrineSchemaDropCommand: ~
+```
+
+Usage:
+```bash
+php bin/console doctrine:schema:delete <schema_name>
+```
+
+### Schema Migrations Command
+Runs Doctrine migrations within a specific schema. Creates the schema if it doesn't exist:
+
+```yaml
+# config/services.yaml
+services:
+    SharedServices\Command\Doctrine\DoctrineSchemaMigrationsMigrateCommand:
+        arguments:
+            - '@doctrine_migrations.migrate_command'
+```
+
+Usage:
+```bash
+php bin/console doctrine:schema:migrations:migrate <schema_name> [options]
+```
+
+### Schema Fixtures Load Command
+Loads Doctrine fixtures within a specific schema:
+
+```yaml
+# config/services.yaml
+services:
+    SharedServices\Command\Doctrine\DoctrineSchemaFixturesLoadCommand:
+        arguments:
+            - '@doctrine.fixtures_load_command'
+```
+
+Usage:
+```bash
+php bin/console doctrine:schema:fixtures:load <schema_name> [options]
+```
+
+**Note:** These commands are optional and should only be registered if you're using the corresponding Doctrine features (migrations and/or fixtures) in your project.
+
+## Testing
 To run tests:
 ```bash
 vendor/bin/phpunit
