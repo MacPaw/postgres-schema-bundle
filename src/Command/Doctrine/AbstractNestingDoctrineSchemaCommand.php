@@ -25,6 +25,8 @@ abstract class AbstractNestingDoctrineSchemaCommand extends AbstractDoctrineSche
 
     protected function configure(): void
     {
+        parent::configure();
+
         foreach ($this->parentCommand->getDefinition()->getArguments() as $argument) {
             $this->addArgument(
                 $argument->getName(),
@@ -43,8 +45,6 @@ abstract class AbstractNestingDoctrineSchemaCommand extends AbstractDoctrineSche
                 $option->getDefault(),
             );
         }
-
-        parent::configure();
     }
 
     protected function runCommand(string $commandName, InputInterface $input, OutputInterface $output): int
