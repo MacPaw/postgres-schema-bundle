@@ -22,7 +22,7 @@ class SchemaConnection extends DBALConnection
     {
         $connection = parent::connect();
 
-        if (!self::$schemaResolver) {
+        if (self::$schemaResolver === null) {
             return $connection;
         }
 

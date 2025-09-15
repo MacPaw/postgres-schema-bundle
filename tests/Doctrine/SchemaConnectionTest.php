@@ -6,7 +6,6 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Doctrine;
 
 use Doctrine\Common\EventManager;
 use Doctrine\DBAL\Configuration;
-use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Driver;
 use Doctrine\DBAL\Driver\Connection as DriverConnection;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
