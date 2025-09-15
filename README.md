@@ -96,13 +96,18 @@ Drops a PostgreSQL schema and all its objects:
 ```yaml
 # config/services.yaml
 services:
-    SharedServices\Command\Doctrine\DoctrineSchemaDropCommand: ~
+    SharedServices\Command\Doctrine\DoctrineSchemaDropCommand:
+        arguments:
+            - '@Doctrine\DBAL\Connection'
+            - ['public'] # Disallowed schema names for safety
 ```
 
 Usage:
 ```bash
 php bin/console doctrine:schema:delete <schema_name>
 ```
+
+**Security Note:** You can specify disallowed schema names to prevent accidental deletion of critical schemas like `public`.
 
 ### Schema Migrations Command
 Runs Doctrine migrations within a specific schema. Creates the schema if it doesn't exist:
@@ -129,12 +134,16 @@ services:
     SharedServices\Command\Doctrine\DoctrineSchemaFixturesLoadCommand:
         arguments:
             - '@doctrine.fixtures_load_command'
+            - '@Doctrine\DBAL\Connection'
+            - ['public'] # Disallowed schema names for safety
 ```
 
 Usage:
 ```bash
 php bin/console doctrine:schema:fixtures:load <schema_name> [options]
 ```
+
+**Security Note:** You can specify disallowed schema names to prevent accidental fixture loading into critical schemas like `public`.
 
 **Note:** These commands are optional and should only be registered if you're using the corresponding Doctrine features (migrations and/or fixtures) in your project.
 
