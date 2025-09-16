@@ -18,7 +18,7 @@ class DoctrineSchemaDropCommand extends AbstractDoctrineSchemaCommand
         Connection $connection,
         private readonly array $disallowedSchemaNames = [],
     ) {
-        parent::__construct('doctrine:schema:delete', $connection);
+        parent::__construct('doctrine:database:schema:drop', $connection);
     }
 
     protected function execute(
