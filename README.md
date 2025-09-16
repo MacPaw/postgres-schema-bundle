@@ -104,7 +104,7 @@ services:
 
 Usage:
 ```bash
-php bin/console doctrine:schema:delete <schema_name>
+php bin/console doctrine:database:schema:drop <schema_name>
 ```
 
 **Security Note:** You can specify disallowed schema names to prevent accidental deletion of critical schemas like `public`.
