@@ -13,9 +13,13 @@ use Throwable;
 
 class DoctrineSchemaFixturesLoadCommand extends AbstractNestingDoctrineSchemaCommand
 {
+    /**
+     * @param string[] $disallowedSchemaNames
+     */
     public function __construct(
         LoadDataFixturesDoctrineCommand $parentCommand,
         Connection $connection,
+        private readonly array $disallowedSchemaNames = [],
     ) {
         parent::__construct('doctrine:schema:fixtures:load', $parentCommand, $connection);
     }
@@ -26,6 +30,14 @@ class DoctrineSchemaFixturesLoadCommand extends AbstractNestingDoctrineSchemaCom
     ): int {
         try {
             $schema = $this->getSchemaFromInput($input);
+
+            if (in_array($schema, $this->disallowedSchemaNames, true)) {
+                $output->writeln(
+                    "<error>Command is disallowed from being called for the '$schema' schema</error>"
+                );
+
+                return Command::FAILURE;
+            }
 
             if (!$this->isSchemaExist($schema)) {
                 $output->writeln("<error>Schema '{$schema}' doesn't exist</error>");

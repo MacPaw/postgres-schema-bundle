@@ -20,7 +20,7 @@ class DoctrineSchemaDropCommandTest extends TestCase
     protected function setUp(): void
     {
         $this->connection = $this->createMock(Connection::class);
-        $this->command = new DoctrineSchemaDropCommand($this->connection);
+        $this->command = new DoctrineSchemaDropCommand($this->connection, ['public']);
     }
 
     public function testSuccess(): void
@@ -40,5 +40,19 @@ class DoctrineSchemaDropCommandTest extends TestCase
         $result = $this->command->run($input, $output);
 
         $this->assertEquals(Command::SUCCESS, $result);
+    }
+
+    public function testDisallowedSchemaNameFail(): void
+    {
+        $input = new ArrayInput(['schema' => 'public']);
+        $output = new BufferedOutput();
+
+        $result = $this->command->run($input, $output);
+
+        $this->assertStringContainsString(
+            "Command is disallowed from being called for the 'public' schema",
+            $output->fetch()
+        );
+        $this->assertEquals(Command::FAILURE, $result);
     }
 }

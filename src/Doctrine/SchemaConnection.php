@@ -50,6 +50,8 @@ class SchemaConnection extends DBALConnection
     private function applySearchPath(string $schema): void
     {
         if ($this->_conn !== null) {
+            $schema = $this->getDatabasePlatform()->quoteIdentifier($schema);
+
             $this->_conn->exec('SET search_path TO ' . $schema);
         }
     }
