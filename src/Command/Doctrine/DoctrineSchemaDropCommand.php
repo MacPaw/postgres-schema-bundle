@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Macpaw\PostgresSchemaBundle\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -16,9 +17,10 @@ class DoctrineSchemaDropCommand extends AbstractDoctrineSchemaCommand
      */
     public function __construct(
         Connection $connection,
+        BaggageSchemaResolver $schemaResolver,
         private readonly array $disallowedSchemaNames = [],
     ) {
-        parent::__construct('doctrine:database:schema:drop', $connection);
+        parent::__construct('doctrine:database:schema:drop', $connection, $schemaResolver);
     }
 
     protected function execute(
