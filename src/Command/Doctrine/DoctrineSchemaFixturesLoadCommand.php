@@ -6,6 +6,7 @@ namespace Macpaw\PostgresSchemaBundle\Command\Doctrine;
 
 use Doctrine\Bundle\FixturesBundle\Command\LoadDataFixturesDoctrineCommand;
 use Doctrine\DBAL\Connection;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -19,9 +20,10 @@ class DoctrineSchemaFixturesLoadCommand extends AbstractNestingDoctrineSchemaCom
     public function __construct(
         LoadDataFixturesDoctrineCommand $parentCommand,
         Connection $connection,
+        BaggageSchemaResolver $schemaResolver,
         private readonly array $disallowedSchemaNames = [],
     ) {
-        parent::__construct('doctrine:schema:fixtures:load', $parentCommand, $connection);
+        parent::__construct('doctrine:schema:fixtures:load', $parentCommand, $connection, $schemaResolver);
     }
 
     protected function execute(

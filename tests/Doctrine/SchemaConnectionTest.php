@@ -38,7 +38,7 @@ class SchemaConnectionTest extends TestCase
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('fetchOne')->willReturn(true);
 
-        $resolver = new BaggageSchemaResolver();
+        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
 
         $resolver->setSchema('test_schema');
 
@@ -70,7 +70,7 @@ class SchemaConnectionTest extends TestCase
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('fetchOne')->willReturn(true);
 
-        $resolver = new BaggageSchemaResolver();
+        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
 
         $resolver->setSchema('test-schema/foo');
 
@@ -85,12 +85,24 @@ class SchemaConnectionTest extends TestCase
     {
         $driverConnection = $this->createMock(DriverConnection::class);
 
+        $driverConnection->expects($this->once())
+            ->method('exec')
+            ->with('SET search_path TO "public"');
+
         $driver = $this->createMock(Driver::class);
 
         $driver->method('connect')->willReturn($driverConnection);
 
-        $connection = new SchemaConnection([], $driver, new Configuration());
-        $resolver = new BaggageSchemaResolver();
+        $platform = new PostgreSQLPlatform();
+        $connection = $this->getMockBuilder(SchemaConnection::class)
+            ->setConstructorArgs([[], $driver, new Configuration(), new EventManager()])
+            ->onlyMethods(['getDatabasePlatform', 'fetchOne'])
+            ->getMock();
+
+        $connection->method('getDatabasePlatform')->willReturn($platform);
+        $connection->method('fetchOne')->willReturn(true);
+
+        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
 
         SchemaConnection::setSchemaResolver($resolver);
 
@@ -114,7 +126,7 @@ class SchemaConnectionTest extends TestCase
 
         $connection->method('getDatabasePlatform')->willReturn($platform);
 
-        $resolver = new BaggageSchemaResolver();
+        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
 
         $resolver->setSchema('test_schema');
 
