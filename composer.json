@@ -18,7 +18,7 @@
         "doctrine/orm": "^2.17 || ^3.0",
         "symfony/doctrine-bridge": "^6.4 || ^7.0",
         "doctrine/dbal": "^3.4",
-        "macpaw/schema-context-bundle": "^1.1"
+        "macpaw/schema-context-bundle": "^2.0"
     },
     "require-dev": {
         "doctrine/migrations": "^3.6",

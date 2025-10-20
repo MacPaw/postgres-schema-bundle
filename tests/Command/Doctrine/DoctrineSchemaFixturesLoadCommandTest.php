@@ -7,6 +7,7 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Command\Doctrine;
 use Doctrine\Bundle\FixturesBundle\Command\LoadDataFixturesDoctrineCommand;
 use Doctrine\DBAL\Connection;
 use Macpaw\PostgresSchemaBundle\Command\Doctrine\DoctrineSchemaFixturesLoadCommand;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Application;
@@ -33,8 +34,14 @@ class DoctrineSchemaFixturesLoadCommandTest extends TestCase
             ->willReturn(new InputDefinition([
                 new InputOption('no-interaction'),
             ]));
+        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
 
-        $this->command = new DoctrineSchemaFixturesLoadCommand($this->parentCommand, $this->connection);
+        $this->command = new DoctrineSchemaFixturesLoadCommand(
+            $this->parentCommand,
+            $this->connection,
+            $resolver,
+            ['public']
+        );
         $this->command->setApplication($this->application);
     }
 
@@ -71,5 +78,19 @@ class DoctrineSchemaFixturesLoadCommandTest extends TestCase
 
         $this->assertEquals(Command::SUCCESS, $result);
         $this->assertStringContainsString("Load fixtures for 'test_schema'...", $output->fetch());
+    }
+
+    public function testDisallowedSchemaNameFail(): void
+    {
+        $input = new ArrayInput(['schema' => 'public']);
+        $output = new BufferedOutput();
+
+        $result = $this->command->run($input, $output);
+
+        $this->assertStringContainsString(
+            "Command is disallowed from being called for the 'public' schema",
+            $output->fetch()
+        );
+        $this->assertEquals(Command::FAILURE, $result);
     }
 }
