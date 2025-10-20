@@ -12,6 +12,7 @@ use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 class SchemaConnection extends DBALConnection
 {
     private static ?BaggageSchemaResolver $schemaResolver = null;
+    private ?string $currentSchema = null;
 
     public static function setSchemaResolver(BaggageSchemaResolver $resolver): void
     {
@@ -32,8 +33,13 @@ class SchemaConnection extends DBALConnection
             return $connection;
         }
 
+        if ($this->currentSchema === $schema) {
+            return $connection;
+        }
+
         $this->ensurePostgreSql();
         $this->applySearchPath($schema);
+        $this->currentSchema = $schema;
 
         return $connection;
     }
