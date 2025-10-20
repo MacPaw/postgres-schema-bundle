@@ -36,10 +36,10 @@ class SchemaConnection extends DBALConnection
         if ($this->currentSchema === $schema) {
             return $connection;
         }
+        $this->currentSchema = $schema;
 
         $this->ensurePostgreSql();
         $this->applySearchPath($schema);
-        $this->currentSchema = $schema;
 
         return $connection;
     }
