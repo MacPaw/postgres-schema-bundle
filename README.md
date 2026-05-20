@@ -1,4 +1,7 @@
 # Postgres Schema Bundle
+
+![Postgres Schema Bundle](.github/header.png)
+
 The **Postgres Schema Bundle** provides seamless multi-tenant schema support for PostgreSQL within Symfony applications. It automatically switches PostgreSQL `search_path` based on the current request context and ensures proper schema resolution across Doctrine and Messenger.## Installation
 
 ## Features
