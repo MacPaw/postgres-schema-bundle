@@ -21,27 +21,27 @@ class SchemaConnection extends DBALConnection
 
     public function connect(): bool
     {
-        $connection = parent::connect();
+        $isNewConnection = parent::connect();
 
         if (self::$schemaResolver === null) {
-            return $connection;
+            return $isNewConnection;
         }
 
         $schema = self::$schemaResolver->getSchema();
 
-        if (!$schema) {
-            return $connection;
+        if ($isNewConnection) {
+            $this->currentSchema = null;
         }
 
         if ($this->currentSchema === $schema) {
-            return $connection;
+            return $isNewConnection;
         }
         $this->currentSchema = $schema;
 
         $this->ensurePostgreSql();
         $this->applySearchPath($schema);
 
-        return $connection;
+        return $isNewConnection;
     }
 
     private function ensurePostgreSql(): void
