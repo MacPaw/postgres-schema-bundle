@@ -7,16 +7,23 @@ namespace Macpaw\PostgresSchemaBundle\Doctrine;
 use Doctrine\DBAL\Connection as DBALConnection;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 
 class SchemaConnection extends DBALConnection
 {
     private static ?BaggageSchemaResolver $schemaResolver = null;
+    private static ?DebugLogger $logger = null;
     private ?string $currentSchema = null;
 
     public static function setSchemaResolver(BaggageSchemaResolver $resolver): void
     {
         self::$schemaResolver = $resolver;
+    }
+
+    public static function setLogger(DebugLogger $logger): void
+    {
+        self::$logger = $logger;
     }
 
     public function connect(): bool
@@ -34,12 +41,14 @@ class SchemaConnection extends DBALConnection
         }
 
         if ($this->currentSchema === $schema) {
+            self::$logger?->logSkipSearchPath($schema);
+
             return $isNewConnection;
         }
         $this->currentSchema = $schema;
 
         $this->ensurePostgreSql();
-        $this->applySearchPath($schema);
+        $this->applySearchPath($schema, $isNewConnection);
 
         return $isNewConnection;
     }
@@ -53,10 +62,12 @@ class SchemaConnection extends DBALConnection
         }
     }
 
-    private function applySearchPath(string $schema): void
+    private function applySearchPath(string $schema, bool $isNewConnection): void
     {
         if ($this->_conn !== null) {
             $schema = $this->getDatabasePlatform()->quoteIdentifier($schema);
+
+            self::$logger?->logApplySearchPath($schema, $isNewConnection);
 
             $this->_conn->exec('SET search_path TO ' . $schema);
         }
