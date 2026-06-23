@@ -31,10 +31,14 @@ jobs:
         exclude:
           - php: '8.3'
             symfony-versions: '8.0.*'
+          - symfony-versions: '7.4.*'
+            doctrine-migrations: '3.6.*'
+          - symfony-versions: '8.0.*'
+            doctrine-migrations: '3.6.*'
         include:
           - description: 'Log Code Coverage'
             php: '8.3'
-            symfony-versions: '^7.0'
+            symfony-versions: '^6.4'
             doctrine-orm-versions: '^3.0'
             doctrine-migrations: '^3.6'
             doctrine-fixtures-bundle: '^3.5'
