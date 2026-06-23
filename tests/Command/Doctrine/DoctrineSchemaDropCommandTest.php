@@ -6,6 +6,7 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
 use Macpaw\PostgresSchemaBundle\Command\Doctrine\DoctrineSchemaDropCommand;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -21,7 +22,13 @@ class DoctrineSchemaDropCommandTest extends TestCase
     protected function setUp(): void
     {
         $this->connection = $this->createMock(Connection::class);
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
         $this->command = new DoctrineSchemaDropCommand($this->connection, $resolver, ['public']);
     }
 

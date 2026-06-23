@@ -20,17 +20,29 @@ jobs:
           - '^3.0'
         symfony-versions:
           - '6.4.*'
-          - '7.0.*'
+          - '7.4.*'
+          - '8.0.*'
         doctrine-migrations:
           - "3.6.*"
           - "3.9.*"
         doctrine-fixtures-bundle:
           - "3.5.*"
           - "4.0.*"
+        exclude:
+          - php: '8.3'
+            symfony-versions: '8.0.*'
+          - symfony-versions: '7.4.*'
+            doctrine-migrations: '3.6.*'
+          - symfony-versions: '8.0.*'
+            doctrine-migrations: '3.6.*'
+          - symfony-versions: '8.0.*'
+            doctrine-fixtures-bundle: '3.5.*'
+          - symfony-versions: '8.0.*'
+            doctrine-fixtures-bundle: '4.0.*'
         include:
           - description: 'Log Code Coverage'
             php: '8.3'
-            symfony-versions: '^7.0'
+            symfony-versions: '^6.4'
             doctrine-orm-versions: '^3.0'
             doctrine-migrations: '^3.6'
             doctrine-fixtures-bundle: '^3.5'

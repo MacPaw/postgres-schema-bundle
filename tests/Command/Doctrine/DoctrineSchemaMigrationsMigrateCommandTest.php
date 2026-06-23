@@ -7,6 +7,7 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Command\Doctrine;
 use Doctrine\DBAL\Connection;
 use Doctrine\Migrations\Tools\Console\Command\MigrateCommand;
 use Macpaw\PostgresSchemaBundle\Command\Doctrine\DoctrineSchemaMigrationsMigrateCommand;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -33,7 +34,13 @@ class DoctrineSchemaMigrationsMigrateCommandTest extends TestCase
             ->willReturn(new InputDefinition([
                 new InputOption('no-interaction'),
             ]));
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
 
         $this->command = new DoctrineSchemaMigrationsMigrateCommand($this->parentCommand, $this->connection, $resolver);
         $this->application = $this->createMock(Application::class);
