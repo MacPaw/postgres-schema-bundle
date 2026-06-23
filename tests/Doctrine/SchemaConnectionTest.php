@@ -12,6 +12,7 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\TestCase;
 
@@ -38,7 +39,13 @@ class SchemaConnectionTest extends TestCase
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('fetchOne')->willReturn(true);
 
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
 
         $resolver->setSchema('test_schema');
 
@@ -70,7 +77,13 @@ class SchemaConnectionTest extends TestCase
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('fetchOne')->willReturn(true);
 
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
 
         $resolver->setSchema('test-schema/foo');
 
@@ -102,7 +115,13 @@ class SchemaConnectionTest extends TestCase
         $connection->method('getDatabasePlatform')->willReturn($platform);
         $connection->method('fetchOne')->willReturn(true);
 
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
 
         SchemaConnection::setSchemaResolver($resolver);
 
@@ -126,7 +145,13 @@ class SchemaConnectionTest extends TestCase
 
         $connection->method('getDatabasePlatform')->willReturn($platform);
 
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
 
         $resolver->setSchema('test_schema');
 

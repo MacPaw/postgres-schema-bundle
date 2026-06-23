@@ -7,6 +7,7 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Command\Doctrine;
 use Doctrine\Bundle\FixturesBundle\Command\LoadDataFixturesDoctrineCommand;
 use Doctrine\DBAL\Connection;
 use Macpaw\PostgresSchemaBundle\Command\Doctrine\DoctrineSchemaFixturesLoadCommand;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -34,7 +35,13 @@ class DoctrineSchemaFixturesLoadCommandTest extends TestCase
             ->willReturn(new InputDefinition([
                 new InputOption('no-interaction'),
             ]));
-        $resolver = new BaggageSchemaResolver('public', 'development', ['development']);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
 
         $this->command = new DoctrineSchemaFixturesLoadCommand(
             $this->parentCommand,
