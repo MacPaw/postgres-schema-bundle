@@ -61,7 +61,10 @@ class SchemaConnection extends DBALConnection
         if ($this->_conn !== null) {
             $result = $this->_conn->query('SHOW search_path');
 
-            return $result->fetchFirstColumn()[0];
+            /** @var string $searchPath */
+            $searchPath = $result->fetchFirstColumn()[0];
+
+            return $searchPath;
         }
 
         return null;
