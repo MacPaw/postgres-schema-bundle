@@ -41,7 +41,10 @@ class SchemaConnection extends DBALConnection
         }
 
         if ($this->currentSchema === $schema) {
-            self::$logger?->logSkipSearchPath($schema);
+            if (self::$logger !== null) {
+                $actualScheme = $this->getActualSearchPath();
+                self::$logger->logSkipSearchPath($schema, $actualScheme);
+            }
 
             return $isNewConnection;
         }
@@ -51,6 +54,17 @@ class SchemaConnection extends DBALConnection
         $this->applySearchPath($schema, $isNewConnection);
 
         return $isNewConnection;
+    }
+
+    private function getActualSearchPath(): ?string
+    {
+        if ($this->_conn !== null) {
+            $result = $this->_conn->query('SHOW search_path');
+
+            return $result->fetchFirstColumn()[0];
+        }
+
+        return null;
     }
 
     private function ensurePostgreSql(): void
