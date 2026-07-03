@@ -58,16 +58,20 @@ class SchemaConnection extends DBALConnection
 
     private function getActualSearchPath(): ?string
     {
-        if ($this->_conn !== null) {
+        if ($this->_conn === null) {
+            return null;
+        }
+
+        try {
             $result = $this->_conn->query('SHOW search_path');
 
             /** @var string $searchPath */
             $searchPath = $result->fetchFirstColumn()[0];
 
             return $searchPath;
+        } catch (\Throwable) {
+            return null;
         }
-
-        return null;
     }
 
     private function ensurePostgreSql(): void
