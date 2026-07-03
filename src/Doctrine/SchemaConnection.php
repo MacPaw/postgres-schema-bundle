@@ -9,6 +9,7 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
+use Throwable;
 
 class SchemaConnection extends DBALConnection
 {
@@ -69,7 +70,7 @@ class SchemaConnection extends DBALConnection
             $searchPath = $result->fetchFirstColumn()[0];
 
             return $searchPath;
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return null;
         }
     }
