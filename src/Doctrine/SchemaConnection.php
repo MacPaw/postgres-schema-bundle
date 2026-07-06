@@ -31,18 +31,20 @@ class SchemaConnection extends DBALConnection
     {
         self::$logger?->logSchemaResetByConnectionClose($this->currentSchema ?? '');
 
-        $this->currentSchema = null;
-
         parent::close();
+
+        $this->currentSchema = null;
     }
 
     public function rollBack(): bool
     {
         self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema ?? '');
 
+        $result = parent::rollBack();
+
         $this->currentSchema = null;
 
-        return parent::rollBack();
+        return $result;
     }
 
     public function connect(): bool
