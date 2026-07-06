@@ -6,6 +6,8 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
 use Macpaw\PostgresSchemaBundle\Command\Doctrine\DoctrineSchemaDropCommand;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
@@ -20,7 +22,14 @@ class DoctrineSchemaDropCommandTest extends TestCase
     protected function setUp(): void
     {
         $this->connection = $this->createMock(Connection::class);
-        $this->command = new DoctrineSchemaDropCommand($this->connection);
+        $logger = new DebugLogger();
+        $resolver = new BaggageSchemaResolver(
+            'public',
+            'development',
+            ['development'],
+            $logger,
+        );
+        $this->command = new DoctrineSchemaDropCommand($this->connection, $resolver, ['public']);
     }
 
     public function testSuccess(): void
@@ -40,5 +49,19 @@ class DoctrineSchemaDropCommandTest extends TestCase
         $result = $this->command->run($input, $output);
 
         $this->assertEquals(Command::SUCCESS, $result);
+    }
+
+    public function testDisallowedSchemaNameFail(): void
+    {
+        $input = new ArrayInput(['schema' => 'public']);
+        $output = new BufferedOutput();
+
+        $result = $this->command->run($input, $output);
+
+        $this->assertStringContainsString(
+            "Command is disallowed from being called for the 'public' schema",
+            $output->fetch()
+        );
+        $this->assertEquals(Command::FAILURE, $result);
     }
 }

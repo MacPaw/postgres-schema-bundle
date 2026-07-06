@@ -6,6 +6,7 @@ namespace Macpaw\PostgresSchemaBundle\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
 use Error;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputArgument;
@@ -19,8 +20,9 @@ abstract class AbstractNestingDoctrineSchemaCommand extends AbstractDoctrineSche
         string $commandName,
         private readonly Command $parentCommand,
         Connection $connection,
+        BaggageSchemaResolver $schemaResolver,
     ) {
-        parent::__construct($commandName, $connection);
+        parent::__construct($commandName, $connection, $schemaResolver);
     }
 
     protected function configure(): void
@@ -76,10 +78,6 @@ abstract class AbstractNestingDoctrineSchemaCommand extends AbstractDoctrineSche
 
         $options = [];
         foreach ($input->getOptions() as $name => $value) {
-            if ($value === null) {
-                continue;
-            }
-
             if ($this->getDefinition()->getOptions()[$name]->getDefault() === $value) {
                 continue;
             }
