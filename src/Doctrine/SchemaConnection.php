@@ -27,6 +27,24 @@ class SchemaConnection extends DBALConnection
         self::$logger = $logger;
     }
 
+    public function close(): void
+    {
+        self::$logger?->logSchemaResetByConnectionClose($this->currentSchema ?? '');
+
+        $this->currentSchema = null;
+
+        parent::close();
+    }
+
+    public function rollBack(): bool
+    {
+        self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema ?? '');
+
+        $this->currentSchema = null;
+
+        return parent::rollBack();
+    }
+
     public function connect(): bool
     {
         $isNewConnection = parent::connect();
@@ -43,8 +61,8 @@ class SchemaConnection extends DBALConnection
 
         if ($this->currentSchema === $schema) {
             if (self::$logger !== null) {
-                $actualScheme = $this->getActualSearchPath();
-                self::$logger->logSkipSearchPath($schema, $actualScheme);
+                self::$logger->logActualSearchPath($this->getActualSearchPath());
+                self::$logger->logSkipSearchPath($schema, $this->isTransactionActive());
             }
 
             return $isNewConnection;
@@ -89,7 +107,7 @@ class SchemaConnection extends DBALConnection
         if ($this->_conn !== null) {
             $schema = $this->getDatabasePlatform()->quoteIdentifier($schema);
 
-            self::$logger?->logApplySearchPath($schema, $isNewConnection);
+            self::$logger?->logApplySearchPath($schema, $isNewConnection, $this->isTransactionActive());
 
             $this->_conn->exec('SET search_path TO ' . $schema);
         }
