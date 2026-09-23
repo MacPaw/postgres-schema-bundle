@@ -7,35 +7,92 @@ namespace Macpaw\PostgresSchemaBundle\Doctrine;
 use Doctrine\DBAL\Connection as DBALConnection;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
+use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
+use Throwable;
 
 class SchemaConnection extends DBALConnection
 {
     private static ?BaggageSchemaResolver $schemaResolver = null;
+    private static ?DebugLogger $logger = null;
+    private ?string $currentSchema = null;
 
     public static function setSchemaResolver(BaggageSchemaResolver $resolver): void
     {
         self::$schemaResolver = $resolver;
     }
 
+    public static function setLogger(DebugLogger $logger): void
+    {
+        self::$logger = $logger;
+    }
+
+    public function close(): void
+    {
+        self::$logger?->logSchemaResetByConnectionClose($this->currentSchema ?? '');
+
+        parent::close();
+
+        $this->currentSchema = null;
+    }
+
+    public function rollBack(): bool
+    {
+        self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema ?? '');
+
+        $result = parent::rollBack();
+
+        $this->currentSchema = null;
+
+        return $result;
+    }
+
     public function connect(): bool
     {
-        $connection = parent::connect();
+        $isNewConnection = parent::connect();
 
         if (self::$schemaResolver === null) {
-            return $connection;
+            return $isNewConnection;
         }
 
         $schema = self::$schemaResolver->getSchema();
 
-        if (!$schema) {
-            return $connection;
+        if ($isNewConnection) {
+            $this->currentSchema = null;
         }
 
-        $this->ensurePostgreSql();
-        $this->applySearchPath($schema);
+        if ($this->currentSchema === $schema) {
+            if (self::$logger !== null) {
+                self::$logger->logActualSearchPath($this->getActualSearchPath());
+                self::$logger->logSkipSearchPath($schema, $this->isTransactionActive());
+            }
 
-        return $connection;
+            return $isNewConnection;
+        }
+        $this->currentSchema = $schema;
+
+        $this->ensurePostgreSql();
+        $this->applySearchPath($schema, $isNewConnection);
+
+        return $isNewConnection;
+    }
+
+    private function getActualSearchPath(): ?string
+    {
+        if ($this->_conn === null) {
+            return null;
+        }
+
+        try {
+            $result = $this->_conn->query('SHOW search_path');
+
+            /** @var string $searchPath */
+            $searchPath = $result->fetchFirstColumn()[0];
+
+            return $searchPath;
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     private function ensurePostgreSql(): void
@@ -47,9 +104,13 @@ class SchemaConnection extends DBALConnection
         }
     }
 
-    private function applySearchPath(string $schema): void
+    private function applySearchPath(string $schema, bool $isNewConnection): void
     {
         if ($this->_conn !== null) {
+            $schema = $this->getDatabasePlatform()->quoteIdentifier($schema);
+
+            self::$logger?->logApplySearchPath($schema, $isNewConnection, $this->isTransactionActive());
+
             $this->_conn->exec('SET search_path TO ' . $schema);
         }
     }

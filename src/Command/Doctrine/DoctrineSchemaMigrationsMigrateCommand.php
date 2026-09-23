@@ -6,6 +6,7 @@ namespace Macpaw\PostgresSchemaBundle\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
 use Doctrine\Migrations\Tools\Console\Command\MigrateCommand;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -16,8 +17,9 @@ class DoctrineSchemaMigrationsMigrateCommand extends AbstractNestingDoctrineSche
     public function __construct(
         MigrateCommand $parentCommand,
         Connection $connection,
+        BaggageSchemaResolver $schemaResolver,
     ) {
-        parent::__construct('doctrine:schema:migrations:migrate', $parentCommand, $connection);
+        parent::__construct('doctrine:schema:migrations:migrate', $parentCommand, $connection, $schemaResolver);
     }
 
     protected function execute(

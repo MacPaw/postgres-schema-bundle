@@ -6,6 +6,7 @@ namespace Macpaw\PostgresSchemaBundle\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
 use Error;
+use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -15,6 +16,7 @@ abstract class AbstractDoctrineSchemaCommand extends Command
     public function __construct(
         string $commandName,
         protected readonly Connection $connection,
+        protected readonly BaggageSchemaResolver $schemaResolver,
     ) {
         parent::__construct($commandName);
     }
@@ -53,6 +55,7 @@ abstract class AbstractDoctrineSchemaCommand extends Command
 
     protected function switchToSchema(string $schema): void
     {
+        $this->schemaResolver->setSchema($schema);
         $quotedSchema = $this->connection->quoteIdentifier($schema);
 
         $this->connection->executeStatement("SET search_path TO {$quotedSchema}");
