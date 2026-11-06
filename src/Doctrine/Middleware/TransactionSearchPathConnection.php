@@ -9,6 +9,7 @@ use Doctrine\DBAL\Driver\Connection;
 use Doctrine\DBAL\Driver\Middleware\AbstractConnectionMiddleware;
 use Doctrine\DBAL\Driver\Result;
 use Doctrine\DBAL\Driver\Statement;
+use Macpaw\PostgresSchemaBundle\Exception\TransactionControlBatchException;
 use Throwable;
 
 /**
@@ -19,15 +20,21 @@ use Throwable;
  */
 final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 {
+    /** String literals, quoted identifiers, dollar-quoted bodies and comments, removed before looking for ';'. */
+    private const NON_CODE_PATTERN = '/\'(?:\'\'|[^\'])*\'|"(?:""|[^"])*"|\$(\w*)\$.*?\$\1\$|\/\*.*?\*\/|--[^\n]*/s';
+
     /** Leading whitespace and SQL comments before the first keyword. */
     private const PREFIX = '/^(?:\s+|\/\*.*?\*\/|--[^\n]*(?:\n|$))*';
     private const BEGIN_PATTERN = self::PREFIX . '(?:BEGIN|START\s+TRANSACTION)\b/is';
     private const ROLLBACK_TO_PATTERN = self::PREFIX . 'ROLLBACK\s+(?:(?:WORK|TRANSACTION)\s+)?TO\b/is';
+    private const CHAIN_PATTERN = self::PREFIX
+        . '(?:COMMIT|END|ABORT|ROLLBACK)(?:\s+(?:WORK|TRANSACTION))?\s+AND\s+CHAIN\b/is';
     private const END_PATTERN = self::PREFIX . '(?:COMMIT|END|ABORT|ROLLBACK)\b/is';
     private const SAVEPOINT_PATTERN = self::PREFIX . '(?:SAVEPOINT|RELEASE)\b/is';
 
     private const CONTROL_BEGIN = 'begin';
     private const CONTROL_END = 'end';
+    private const CONTROL_CHAIN = 'chain';
     private const CONTROL_ROLLBACK_TO = 'rollback_to';
     private const CONTROL_SAVEPOINT = 'savepoint';
 
@@ -61,7 +68,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         $control = $this->classifyTransactionControl($sql);
 
         if ($control !== null) {
-            return $this->runTransactionControl($control, fn (): Result => parent::query($sql));
+            return $this->runTransactionControl($control, $sql, fn (): Result => parent::query($sql));
         }
 
         return $this->runWithSearchPath(fn (): Result => parent::query($sql));
@@ -72,7 +79,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         $control = $this->classifyTransactionControl($sql);
 
         if ($control !== null) {
-            return $this->runTransactionControl($control, fn (): int => parent::exec($sql));
+            return $this->runTransactionControl($control, $sql, fn (): int => parent::exec($sql));
         }
 
         return $this->runWithSearchPath(fn (): int => parent::exec($sql));
@@ -201,6 +208,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         return match (true) {
             preg_match(self::BEGIN_PATTERN, $sql) === 1 => self::CONTROL_BEGIN,
             preg_match(self::ROLLBACK_TO_PATTERN, $sql) === 1 => self::CONTROL_ROLLBACK_TO,
+            preg_match(self::CHAIN_PATTERN, $sql) === 1 => self::CONTROL_CHAIN,
             preg_match(self::END_PATTERN, $sql) === 1 => self::CONTROL_END,
             preg_match(self::SAVEPOINT_PATTERN, $sql) === 1 => self::CONTROL_SAVEPOINT,
             default => null,
@@ -220,12 +228,28 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
      *
      * @return T
      */
-    private function runTransactionControl(string $control, Closure $operation): mixed
+    private function runTransactionControl(string $control, string $sql, Closure $operation): mixed
     {
-        $result = $operation();
+        if (($this->isActive)() && $this->isBatch($sql)) {
+            // Statements after the first one would run without SET LOCAL and outside the tracked state.
+            throw new TransactionControlBatchException();
+        }
+
+        try {
+            $result = $operation();
+        } catch (Throwable $exception) {
+            // A failed COMMIT/ROLLBACK still ends the transaction block; the savepoint state is unknown.
+            if ($control === self::CONTROL_END || $control === self::CONTROL_CHAIN) {
+                $this->endTransaction();
+            } elseif ($control === self::CONTROL_ROLLBACK_TO) {
+                $this->isAppliedSchemaKnown = false;
+            }
+
+            throw $exception;
+        }
 
         match ($control) {
-            self::CONTROL_BEGIN => $this->startTransaction(),
+            self::CONTROL_BEGIN, self::CONTROL_CHAIN => $this->startTransaction(),
             self::CONTROL_END => $this->endTransaction(),
             // A SET LOCAL issued after the savepoint is undone with it, so re-apply before the next query.
             self::CONTROL_ROLLBACK_TO => $this->isAppliedSchemaKnown = false,
@@ -233,6 +257,13 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         };
 
         return $result;
+    }
+
+    private function isBatch(string $sql): bool
+    {
+        $code = (string) preg_replace(self::NON_CODE_PATTERN, '', $sql);
+
+        return str_contains(rtrim($code, " \t\n\r\0\x0B;"), ';');
     }
 
     private function startTransaction(): void

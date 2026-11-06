@@ -9,6 +9,7 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception as DBALException;
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
 use Macpaw\PostgresSchemaBundle\Doctrine\SearchPathMode;
+use Macpaw\PostgresSchemaBundle\Exception\TransactionControlBatchException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use PHPUnit\Framework\TestCase;
@@ -235,6 +236,74 @@ final class SearchPathPgbouncerTest extends TestCase
         $preview->executeQuery("-- app\nROLLBACK");
 
         self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'raw-query-tx'));
+    }
+
+    public function testTransactionModeRejectsTransactionControlBatch(): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        try {
+            $preview->executeStatement("BEGIN; INSERT INTO marker (v) VALUES ('batch'); COMMIT");
+            self::fail('A transaction control batch must be rejected.');
+        } catch (TransactionControlBatchException) {
+        }
+
+        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'batch'));
+        self::assertSame(0, $this->countDirect('public', 'batch'));
+        self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
+    }
+
+    public function testTransactionModeAppliesSchemaAfterFailedRawCommit(): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        $preview->executeStatement('START TRANSACTION');
+        $preview->executeStatement("INSERT INTO deferred_unique (v) VALUES ('raw-dup'), ('raw-dup')");
+
+        try {
+            $preview->executeStatement('COMMIT');
+            self::fail('The deferred unique constraint must fail on COMMIT.');
+        } catch (DBALException) {
+        }
+
+        self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
+        self::assertSame(0, $this->countOpenServerTransactions());
+    }
+
+    public function testTransactionModeKeepsTransactionOpenAfterCommitAndChain(): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        $preview->executeStatement('START TRANSACTION');
+        $preview->insert('marker', ['v' => 'chain-commit-1']);
+        $preview->executeStatement('COMMIT AND CHAIN');
+        $preview->insert('marker', ['v' => 'chain-commit-2']);
+        $preview->executeStatement('ROLLBACK');
+
+        self::assertSame(1, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-commit-1'));
+        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-commit-2'));
+    }
+
+    public function testTransactionModeKeepsTransactionOpenAfterRollbackAndChain(): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        $preview->executeStatement('START TRANSACTION');
+        $preview->insert('marker', ['v' => 'chain-rollback-1']);
+        $preview->executeStatement('ROLLBACK AND CHAIN');
+        $preview->insert('marker', ['v' => 'chain-rollback-2']);
+        $preview->executeStatement('ROLLBACK');
+
+        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-rollback-1'));
+        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-rollback-2'));
     }
 
     public function testRawTransactionStartedBeforeTransactionModeIsSwitchedOnStaysOpen(): void

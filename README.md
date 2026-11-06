@@ -103,7 +103,9 @@ In transaction mode:
 - The schema commands below only set the schema in the resolver; they do not issue a session `SET`.
 - Transaction control SQL (`BEGIN`, `COMMIT`, `ROLLBACK`, savepoints) sent with `executeStatement()` or
   `executeQuery()` runs as is, without `SET LOCAL` before it. Send it as a plain statement, not as a prepared
-  statement with parameters.
+  statement with parameters. `COMMIT AND CHAIN` and `ROLLBACK AND CHAIN` keep the transaction open.
+- Transaction control batched with other statements (`BEGIN; INSERT ...; COMMIT`) is rejected with
+  `TransactionControlBatchException`: the statements after the first one would run without `SET LOCAL`.
 - In the default `Session` mode statements pass through unchanged.
 
 Choosing `$serverDefaultSchema`:
