@@ -167,6 +167,7 @@ class SchemaConnectionTest extends TestCase
 
     public function testTransactionModeThrowsForUnsupportedPlatform(): void
     {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
         $driverConnection = $this->createMock(AbstractConnectionMiddleware::class);
         $driverConnection->method('getNativeConnection')->willReturn($this->createMock(PDO::class));
         $driverConnection->expects($this->never())->method('exec');
@@ -182,7 +183,6 @@ class SchemaConnectionTest extends TestCase
         SchemaConnection::setSchemaResolver(
             new BaggageSchemaResolver('public', 'development', ['development'], new DebugLogger()),
         );
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
 
         try {
             $this->expectException(UnsupportedPlatformException::class);
@@ -194,6 +194,7 @@ class SchemaConnectionTest extends TestCase
 
     public function testTransactionModeRejectsNonPdoConnection(): void
     {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
         $driverConnection = $this->createMock(AbstractConnectionMiddleware::class);
         $driverConnection->method('getNativeConnection')->willReturn(new stdClass());
         $driverConnection->expects($this->never())->method('exec');
@@ -204,7 +205,6 @@ class SchemaConnectionTest extends TestCase
         SchemaConnection::setSchemaResolver(
             new BaggageSchemaResolver('public', 'development', ['development'], new DebugLogger()),
         );
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
 
         try {
             $this->expectException(UnsupportedDriverException::class);
@@ -212,5 +212,17 @@ class SchemaConnectionTest extends TestCase
         } finally {
             SchemaConnection::setSearchPathMode(SearchPathMode::Session);
         }
+    }
+
+    public function testSessionModeDoesNotWrapDriverConnection(): void
+    {
+        $driverConnection = $this->createMock(DriverConnection::class);
+        $driver = $this->createMock(Driver::class);
+        $driver->method('connect')->willReturn($driverConnection);
+        $driver->method('getDatabasePlatform')->willReturn(new PostgreSQLPlatform());
+
+        $connection = new SchemaConnection([], $driver, new Configuration(), new EventManager());
+
+        self::assertSame($driverConnection, $connection->getWrappedConnection());
     }
 }

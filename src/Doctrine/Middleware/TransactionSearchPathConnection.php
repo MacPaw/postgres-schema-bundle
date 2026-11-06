@@ -9,41 +9,37 @@ use Doctrine\DBAL\Driver\Connection;
 use Doctrine\DBAL\Driver\Middleware\AbstractConnectionMiddleware;
 use Doctrine\DBAL\Driver\Result;
 use Doctrine\DBAL\Driver\Statement;
-use Macpaw\PostgresSchemaBundle\Exception\TransactionControlBatchException;
+use Macpaw\PostgresSchemaBundle\Exception\TransactionSearchPathModeException;
 use Throwable;
 
 /**
  * Applies search_path with SET LOCAL, so it never outlives the transaction and cannot leak to other clients
  * through a PgBouncer server connection in transaction pooling mode.
  *
- * While $isActive returns false every statement is sent unchanged; only transaction control SQL is tracked.
+ * Transactions must be managed through the DBAL API (beginTransaction(), commit(), rollBack(), transactional()).
+ * Raw BEGIN/COMMIT/ROLLBACK SQL is rejected; savepoint SQL, which DBAL sends for nested transactions, is allowed
+ * as a single statement. Transaction control or savepoint SQL batched with other statements is rejected.
  */
 final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 {
-    /** String literals, quoted identifiers, dollar-quoted bodies and comments, removed before looking for ';'. */
+    /** String literals, quoted identifiers, dollar-quoted bodies and comments: removed before splitting on ';'. */
     private const NON_CODE_PATTERN = '/\'(?:\'\'|[^\'])*\'|"(?:""|[^"])*"|\$(\w*)\$.*?\$\1\$|\/\*.*?\*\/|--[^\n]*/s';
+    private const PREPARED_2PC_PATTERN = '/^(?:COMMIT|ROLLBACK)\s+PREPARED\b/i';
+    private const ROLLBACK_TO_PATTERN = '/^ROLLBACK\s+(?:(?:WORK|TRANSACTION)\s+)?TO\b/i';
+    private const SAVEPOINT_PATTERN = '/^(?:SAVEPOINT|RELEASE)\b/i';
+    private const TRANSACTION_CONTROL_PATTERN
+        = '/^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|ROLLBACK|PREPARE\s+TRANSACTION)\b/i';
 
-    /** Leading whitespace and SQL comments before the first keyword. */
-    private const PREFIX = '/^(?:\s+|\/\*.*?\*\/|--[^\n]*(?:\n|$))*';
-    private const BEGIN_PATTERN = self::PREFIX . '(?:BEGIN|START\s+TRANSACTION)\b/is';
-    private const ROLLBACK_TO_PATTERN = self::PREFIX . 'ROLLBACK\s+(?:(?:WORK|TRANSACTION)\s+)?TO\b/is';
-    private const CHAIN_PATTERN = self::PREFIX
-        . '(?:COMMIT|END|ABORT|ROLLBACK)(?:\s+(?:WORK|TRANSACTION))?\s+AND\s+CHAIN\b/is';
-    private const END_PATTERN = self::PREFIX . '(?:COMMIT|END|ABORT|ROLLBACK)\b/is';
-    private const SAVEPOINT_PATTERN = self::PREFIX . '(?:SAVEPOINT|RELEASE)\b/is';
-
-    private const CONTROL_BEGIN = 'begin';
-    private const CONTROL_END = 'end';
-    private const CONTROL_CHAIN = 'chain';
-    private const CONTROL_ROLLBACK_TO = 'rollback_to';
-    private const CONTROL_SAVEPOINT = 'savepoint';
+    private const KIND_SAVEPOINT = 'savepoint';
+    private const KIND_ROLLBACK_TO = 'rollback_to';
+    private const KIND_CONTROL = 'control';
+    private const KIND_PASSTHROUGH = 'passthrough';
 
     private bool $inTransaction = false;
     private ?string $appliedSchema = null;
     private bool $isAppliedSchemaKnown = true;
 
     /**
-     * @param Closure(): bool             $isActive       whether transaction search_path mode is on
      * @param Closure(): ?string          $schemaProvider returns the quoted schema to apply,
      *                                                    or null to keep the server default
      * @param Closure(string, bool): void $onApply        called with the quoted schema and whether
@@ -51,7 +47,6 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
      */
     public function __construct(
         Connection $wrappedConnection,
-        private readonly Closure $isActive,
         private readonly Closure $schemaProvider,
         private readonly Closure $onApply,
     ) {
@@ -60,29 +55,21 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 
     public function prepare(string $sql): Statement
     {
+        if ($this->classify($sql) !== null) {
+            throw TransactionSearchPathModeException::rawTransactionControl();
+        }
+
         return new TransactionSearchPathStatement(parent::prepare($sql), $this);
     }
 
     public function query(string $sql): Result
     {
-        $control = $this->classifyTransactionControl($sql);
-
-        if ($control !== null) {
-            return $this->runTransactionControl($control, $sql, fn (): Result => parent::query($sql));
-        }
-
-        return $this->runWithSearchPath(fn (): Result => parent::query($sql));
+        return $this->run($sql, fn (): Result => parent::query($sql));
     }
 
     public function exec(string $sql): int
     {
-        $control = $this->classifyTransactionControl($sql);
-
-        if ($control !== null) {
-            return $this->runTransactionControl($control, $sql, fn (): int => parent::exec($sql));
-        }
-
-        return $this->runWithSearchPath(fn (): int => parent::exec($sql));
+        return $this->run($sql, fn (): int => parent::exec($sql));
     }
 
     public function beginTransaction(): bool
@@ -133,10 +120,6 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
      */
     public function runWithSearchPath(Closure $operation): mixed
     {
-        if (!($this->isActive)()) {
-            return $operation();
-        }
-
         if ($this->inTransaction) {
             $this->applyInTransaction();
 
@@ -154,10 +137,6 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 
     private function applyInTransaction(): void
     {
-        if (!($this->isActive)()) {
-            return;
-        }
-
         $schema = ($this->schemaProvider)();
 
         if ($this->isAppliedSchemaKnown && $schema === $this->appliedSchema) {
@@ -201,69 +180,80 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
     }
 
     /**
-     * @return self::CONTROL_*|null
+     * @template T
+     *
+     * @param Closure(): T $operation
+     *
+     * @return T
      */
-    private function classifyTransactionControl(string $sql): ?string
+    private function run(string $sql, Closure $operation): mixed
     {
-        return match (true) {
-            preg_match(self::BEGIN_PATTERN, $sql) === 1 => self::CONTROL_BEGIN,
-            preg_match(self::ROLLBACK_TO_PATTERN, $sql) === 1 => self::CONTROL_ROLLBACK_TO,
-            preg_match(self::CHAIN_PATTERN, $sql) === 1 => self::CONTROL_CHAIN,
-            preg_match(self::END_PATTERN, $sql) === 1 => self::CONTROL_END,
-            preg_match(self::SAVEPOINT_PATTERN, $sql) === 1 => self::CONTROL_SAVEPOINT,
-            default => null,
+        return match ($this->classify($sql)) {
+            null => $this->runWithSearchPath($operation),
+            self::KIND_CONTROL => throw TransactionSearchPathModeException::rawTransactionControl(),
+            // No SET LOCAL before savepoint SQL: in an aborted transaction it would fail and block the recovery.
+            self::KIND_SAVEPOINT, self::KIND_PASSTHROUGH => $operation(),
+            self::KIND_ROLLBACK_TO => $this->runRollbackToSavepoint($operation),
         };
     }
 
     /**
-     * Transaction control SQL runs as is in every mode: no SET LOCAL before it (it would fail in an aborted
-     * transaction and block the recovery) and no implicit transaction around it (it would end the caller's
-     * transaction). Its effect is tracked even while the mode is inactive, so the state stays correct
-     * if the mode is switched on later.
-     *
      * @template T
      *
-     * @param self::CONTROL_* $control
-     * @param Closure(): T    $operation
+     * @param Closure(): T $operation
      *
      * @return T
      */
-    private function runTransactionControl(string $control, string $sql, Closure $operation): mixed
+    private function runRollbackToSavepoint(Closure $operation): mixed
     {
-        if (($this->isActive)() && $this->isBatch($sql)) {
-            // Statements after the first one would run without SET LOCAL and outside the tracked state.
-            throw new TransactionControlBatchException();
-        }
-
         try {
-            $result = $operation();
-        } catch (Throwable $exception) {
-            // A failed COMMIT/ROLLBACK still ends the transaction block; the savepoint state is unknown.
-            if ($control === self::CONTROL_END || $control === self::CONTROL_CHAIN) {
-                $this->endTransaction();
-            } elseif ($control === self::CONTROL_ROLLBACK_TO) {
-                $this->isAppliedSchemaKnown = false;
-            }
-
-            throw $exception;
-        }
-
-        match ($control) {
-            self::CONTROL_BEGIN, self::CONTROL_CHAIN => $this->startTransaction(),
-            self::CONTROL_END => $this->endTransaction(),
+            return $operation();
+        } finally {
             // A SET LOCAL issued after the savepoint is undone with it, so re-apply before the next query.
-            self::CONTROL_ROLLBACK_TO => $this->isAppliedSchemaKnown = false,
-            self::CONTROL_SAVEPOINT => null,
-        };
-
-        return $result;
+            $this->isAppliedSchemaKnown = false;
+        }
     }
 
-    private function isBatch(string $sql): bool
+    /**
+     * Classifies transaction control in a statement or a batch. Null means ordinary SQL.
+     *
+     * @return self::KIND_*|null
+     */
+    private function classify(string $sql): ?string
     {
-        $code = (string) preg_replace(self::NON_CODE_PATTERN, '', $sql);
+        // Fast path for the common case: one statement without a leading comment.
+        if (!str_contains($sql, ';') && preg_match('/^\s*(?:--|\/\*)/', $sql) !== 1) {
+            return $this->classifyStatement(ltrim($sql));
+        }
 
-        return str_contains(rtrim($code, " \t\n\r\0\x0B;"), ';');
+        $code = (string) preg_replace(self::NON_CODE_PATTERN, ' ', $sql);
+        $statements = array_values(array_filter(
+            array_map(trim(...), explode(';', $code)),
+            static fn (string $statement): bool => $statement !== '',
+        ));
+        $kinds = array_map($this->classifyStatement(...), $statements);
+        $controlKinds = array_filter($kinds, static fn (?string $kind): bool => $kind !== null);
+
+        if ($controlKinds === []) {
+            return null;
+        }
+
+        // Statements after transaction control in a batch would run without SET LOCAL or end the transaction.
+        return count($statements) === 1 ? $controlKinds[0] : self::KIND_CONTROL;
+    }
+
+    /**
+     * @return self::KIND_*|null
+     */
+    private function classifyStatement(string $statement): ?string
+    {
+        return match (true) {
+            preg_match(self::PREPARED_2PC_PATTERN, $statement) === 1 => self::KIND_PASSTHROUGH,
+            preg_match(self::ROLLBACK_TO_PATTERN, $statement) === 1 => self::KIND_ROLLBACK_TO,
+            preg_match(self::SAVEPOINT_PATTERN, $statement) === 1 => self::KIND_SAVEPOINT,
+            preg_match(self::TRANSACTION_CONTROL_PATTERN, $statement) === 1 => self::KIND_CONTROL,
+            default => null,
+        };
     }
 
     private function startTransaction(): void

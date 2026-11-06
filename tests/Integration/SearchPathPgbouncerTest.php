@@ -7,11 +7,13 @@ namespace Macpaw\PostgresSchemaBundle\Tests\Integration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception as DBALException;
+use Macpaw\PostgresSchemaBundle\Doctrine\Middleware\TransactionSearchPathConnection;
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
 use Macpaw\PostgresSchemaBundle\Doctrine\SearchPathMode;
-use Macpaw\PostgresSchemaBundle\Exception\TransactionControlBatchException;
+use Macpaw\PostgresSchemaBundle\Exception\TransactionSearchPathModeException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use RuntimeException;
@@ -211,112 +213,100 @@ final class SearchPathPgbouncerTest extends TestCase
         $preview->commit();
     }
 
-    public function testTransactionModeKeepsRawTransactionControlStatements(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function rawTransactionControlProvider(): iterable
     {
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
-        $preview = $this->connect();
-        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
-
-        $preview->executeStatement('START TRANSACTION');
-        $preview->insert('marker', ['v' => 'raw-tx']);
-        $preview->executeStatement('ROLLBACK');
-
-        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'raw-tx'));
-        self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
+        yield 'begin' => ['BEGIN'];
+        yield 'start transaction with comment' => ['/* app */ START TRANSACTION'];
+        yield 'commit' => ['COMMIT'];
+        yield 'rollback and chain' => ["-- app\nROLLBACK AND CHAIN"];
+        yield 'batch' => ["BEGIN; INSERT INTO marker (v) VALUES ('batch'); COMMIT"];
     }
 
-    public function testTransactionModeKeepsRawTransactionControlSentThroughQueryWithComments(): void
+    #[DataProvider('rawTransactionControlProvider')]
+    public function testTransactionModeRejectsRawTransactionControl(string $sql): void
     {
         SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
         $preview = $this->connect();
         $this->resolver->setSchema(self::PREVIEW_SCHEMA);
 
-        $preview->executeQuery('/* app */ BEGIN');
-        $preview->insert('marker', ['v' => 'raw-query-tx']);
-        $preview->executeQuery("-- app\nROLLBACK");
-
-        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'raw-query-tx'));
-    }
-
-    public function testTransactionModeRejectsTransactionControlBatch(): void
-    {
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
-        $preview = $this->connect();
-        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
-
-        try {
-            $preview->executeStatement("BEGIN; INSERT INTO marker (v) VALUES ('batch'); COMMIT");
-            self::fail('A transaction control batch must be rejected.');
-        } catch (TransactionControlBatchException) {
+        foreach (['executeStatement', 'executeQuery'] as $method) {
+            try {
+                $preview->{$method}($sql);
+                self::fail(sprintf('%s() must reject raw transaction control.', $method));
+            } catch (TransactionSearchPathModeException) {
+            }
         }
 
         self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'batch'));
-        self::assertSame(0, $this->countDirect('public', 'batch'));
         self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
     }
 
-    public function testTransactionModeAppliesSchemaAfterFailedRawCommit(): void
+    public function testIdleConnectionSwitchesToModeSetAfterItWasCreated(): void
     {
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
         $preview = $this->connect();
-        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+        self::assertSame(self::PREVIEW_MARKER, $this->readMarker($preview, self::PREVIEW_SCHEMA));
 
-        $preview->executeStatement('START TRANSACTION');
-        $preview->executeStatement("INSERT INTO deferred_unique (v) VALUES ('raw-dup'), ('raw-dup')");
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $default = $this->connect();
+
+        self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
+        self::assertSame(self::PUBLIC_MARKER, $this->readMarker($default, null));
+        self::assertInstanceOf(TransactionSearchPathConnection::class, $preview->getWrappedConnection());
+    }
+
+    public function testModeChangeInsideTransactionIsRejected(): void
+    {
+        $preview = $this->connect();
+        $preview->beginTransaction();
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
 
         try {
-            $preview->executeStatement('COMMIT');
-            self::fail('The deferred unique constraint must fail on COMMIT.');
-        } catch (DBALException) {
+            $this->expectException(TransactionSearchPathModeException::class);
+            $preview->fetchOne('SELECT 1');
+        } finally {
+            SchemaConnection::setSearchPathMode(SearchPathMode::Session);
+            $preview->rollBack();
         }
-
-        self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
-        self::assertSame(0, $this->countOpenServerTransactions());
     }
 
-    public function testTransactionModeKeepsTransactionOpenAfterCommitAndChain(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function savepointBatchProvider(): iterable
+    {
+        yield 'savepoint then update' => ["SAVEPOINT s1; UPDATE marker SET v = v WHERE v = 'none'"];
+        yield 'statement then commit' => ["UPDATE marker SET v = v WHERE v = 'none'; COMMIT"];
+        yield 'prepare transaction' => ["PREPARE TRANSACTION 'tx1'"];
+    }
+
+    #[DataProvider('savepointBatchProvider')]
+    public function testTransactionModeRejectsTransactionControlInBatchInsideTransaction(string $sql): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+        $preview->beginTransaction();
+
+        try {
+            $this->expectException(TransactionSearchPathModeException::class);
+            $preview->executeStatement($sql);
+        } finally {
+            $preview->rollBack();
+        }
+    }
+
+    public function testTransactionModeAllowsStatementsWithSemicolonsInLiterals(): void
     {
         SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
         $preview = $this->connect();
         $this->resolver->setSchema(self::PREVIEW_SCHEMA);
 
-        $preview->executeStatement('START TRANSACTION');
-        $preview->insert('marker', ['v' => 'chain-commit-1']);
-        $preview->executeStatement('COMMIT AND CHAIN');
-        $preview->insert('marker', ['v' => 'chain-commit-2']);
-        $preview->executeStatement('ROLLBACK');
+        $preview->executeStatement("INSERT INTO marker (v) VALUES ('a; COMMIT')");
 
-        self::assertSame(1, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-commit-1'));
-        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-commit-2'));
-    }
-
-    public function testTransactionModeKeepsTransactionOpenAfterRollbackAndChain(): void
-    {
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
-        $preview = $this->connect();
-        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
-
-        $preview->executeStatement('START TRANSACTION');
-        $preview->insert('marker', ['v' => 'chain-rollback-1']);
-        $preview->executeStatement('ROLLBACK AND CHAIN');
-        $preview->insert('marker', ['v' => 'chain-rollback-2']);
-        $preview->executeStatement('ROLLBACK');
-
-        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-rollback-1'));
-        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'chain-rollback-2'));
-    }
-
-    public function testRawTransactionStartedBeforeTransactionModeIsSwitchedOnStaysOpen(): void
-    {
-        $preview = $this->connect();
-        $preview->executeStatement('START TRANSACTION');
-        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
-        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
-
-        $preview->insert('marker', ['v' => 'late-mode']);
-        $preview->executeStatement('ROLLBACK');
-
-        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'late-mode'));
+        self::assertSame(1, $this->countDirect(self::PREVIEW_SCHEMA, 'a; COMMIT'));
     }
 
     public function testTransactionModeClosesImplicitTransactionWhenApplyFails(): void

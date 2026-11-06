@@ -101,12 +101,14 @@ In transaction mode:
   `ROLLBACK TO SAVEPOINT`.
 - Plain queries, executed statements and prepared statements (Doctrine ORM) are all covered.
 - The schema commands below only set the schema in the resolver; they do not issue a session `SET`.
-- Transaction control SQL (`BEGIN`, `COMMIT`, `ROLLBACK`, savepoints) sent with `executeStatement()` or
-  `executeQuery()` runs as is, without `SET LOCAL` before it. Send it as a plain statement, not as a prepared
-  statement with parameters. `COMMIT AND CHAIN` and `ROLLBACK AND CHAIN` keep the transaction open.
-- Transaction control batched with other statements (`BEGIN; INSERT ...; COMMIT`) is rejected with
-  `TransactionControlBatchException`: the statements after the first one would run without `SET LOCAL`.
-- In the default `Session` mode statements pass through unchanged.
+- Manage transactions through the DBAL API: `beginTransaction()`, `commit()`, `rollBack()`, `transactional()`.
+  Raw `BEGIN`, `START TRANSACTION`, `COMMIT`, `ROLLBACK`, `END`, `ABORT` or `PREPARE TRANSACTION` SQL is rejected
+  with `TransactionSearchPathModeException`, as is any of it in a prepared statement or batched with other
+  statements. A single savepoint statement (`SAVEPOINT`, `RELEASE`, `ROLLBACK TO`), which DBAL uses for nested
+  transactions, runs as is.
+- The mode is applied when a physical connection opens. An idle connection opened in the other mode is reopened;
+  changing the mode while a transaction is open throws `TransactionSearchPathModeException`.
+- In the default `Session` mode the driver connection is not wrapped, and the bundle behaves exactly as before.
 
 Choosing `$serverDefaultSchema`:
 

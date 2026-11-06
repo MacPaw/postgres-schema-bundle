@@ -11,6 +11,7 @@ use Doctrine\DBAL\Driver;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Macpaw\PostgresSchemaBundle\Doctrine\Middleware\TransactionSearchPathDriver;
+use Macpaw\PostgresSchemaBundle\Exception\TransactionSearchPathModeException;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
@@ -25,6 +26,8 @@ class SchemaConnection extends DBALConnection
     private static ?DebugLogger $logger = null;
     private static SearchPathMode $searchPathMode = SearchPathMode::Session;
     private static ?string $serverDefaultSchema = null;
+    /** Whether the open physical connection was created in transaction mode; null when not connected. */
+    private ?bool $isConnectedInTransactionMode = null;
     private ?string $currentSchema = null;
 
     /**
@@ -37,9 +40,11 @@ class SchemaConnection extends DBALConnection
         ?Configuration $config = null,
         ?EventManager $eventManager = null,
     ) {
+        // The mode is decided per physical connection on connect: in Session mode the driver connection is
+        // returned unwrapped, so statements go to the database exactly as before.
         $driver = new TransactionSearchPathDriver(
             $driver,
-            self::isTransactionSearchPathActive(...),
+            self::isTransactionModeActive(...),
             self::resolveTransactionSearchPath(...),
             self::logTransactionSearchPath(...),
         );
@@ -48,6 +53,9 @@ class SchemaConnection extends DBALConnection
     }
 
     /**
+     * The mode applies to physical connections opened after the call; an idle open connection is reopened
+     * in the new mode, and switching while a transaction is open throws.
+     *
      * @param string|null $serverDefaultSchema null (strict, default) applies SET LOCAL to every query, ignoring any
      *                                         session search_path another client left on the pooled server
      *                                         connection. A schema name skips SET LOCAL for that schema and relies
@@ -83,6 +91,7 @@ class SchemaConnection extends DBALConnection
         parent::close();
 
         $this->currentSchema = null;
+        $this->isConnectedInTransactionMode = null;
     }
 
     public function rollBack(): bool
@@ -100,17 +109,31 @@ class SchemaConnection extends DBALConnection
 
     public function connect(): bool
     {
-        $isNewConnection = parent::connect();
+        $isTransactionMode = self::isTransactionModeActive();
 
-        if (self::$schemaResolver === null) {
-            return $isNewConnection;
+        $isModeChanged = $this->isConnectedInTransactionMode !== null
+            && $this->isConnectedInTransactionMode !== $isTransactionMode;
+
+        if ($isModeChanged) {
+            if ($this->isTransactionActive()) {
+                throw TransactionSearchPathModeException::modeChangedInTransaction();
+            }
+
+            $this->close();
         }
 
-        if (self::$searchPathMode === SearchPathMode::Transaction) {
+        $isNewConnection = parent::connect();
+        $this->isConnectedInTransactionMode = $isTransactionMode;
+
+        if ($isTransactionMode) {
             if ($isNewConnection) {
                 $this->ensurePostgreSql();
             }
 
+            return $isNewConnection;
+        }
+
+        if (self::$schemaResolver === null) {
             return $isNewConnection;
         }
 
@@ -136,7 +159,7 @@ class SchemaConnection extends DBALConnection
         return $isNewConnection;
     }
 
-    private static function isTransactionSearchPathActive(): bool
+    private static function isTransactionModeActive(): bool
     {
         return self::$searchPathMode === SearchPathMode::Transaction && self::$schemaResolver !== null;
     }
