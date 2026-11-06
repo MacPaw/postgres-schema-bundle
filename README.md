@@ -224,7 +224,7 @@ docker compose down
 ```
 
 Without `DIRECT_DATABASE_URL` and `PGBOUNCER_DATABASE_URL` the integration tests are skipped.
-CI runs them in the `integration` job against PostgreSQL 14 and 18.
+CI runs them in every matrix job against PostgreSQL 14, and in one job against PostgreSQL 18.
 ## Contributing
 Feel free to open issues and submit pull requests.
 

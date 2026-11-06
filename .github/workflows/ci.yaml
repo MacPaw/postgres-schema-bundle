@@ -47,75 +47,17 @@ jobs:
             doctrine-migrations: '^3.6'
             doctrine-fixtures-bundle: '^3.5'
             coverage: xdebug
+          - description: 'PostgreSQL 18'
+            php: '8.4'
+            symfony-versions: '7.4.*'
+            doctrine-orm-versions: '^3.0'
+            doctrine-migrations: '3.9.*'
+            doctrine-fixtures-bundle: '4.0.*'
+            postgres: '18'
 
-    name: PHP ${{ matrix.php }} Symfony ${{ matrix.symfony-versions }} Doctrine ${{ matrix.doctrine-orm-versions }} Doctrine migrations ${{ matrix.doctrine-migrations }} Doctrine fixtures bundle ${{ matrix.doctrine-fixtures-bundle }} ${{ matrix.description }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.composer/cache/files
-          key: ${{ matrix.php }}-${{ matrix.symfony-versions }}
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php }}
-          coverage: xdebug
-
-      - name: Add PHPUnit matcher
-        run: echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
-
-      - name: Set composer cache directory
-        id: composer-cache
-        run: echo "::set-output name=dir::$(composer config cache-files-dir)"
-
-      - name: Cache composer
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.composer-cache.outputs.dir }}
-          key: ${{ runner.os }}-${{ matrix.php }}-${{ matrix.symfony-versions }}-composer-${{ hashFiles('composer.json') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.php }}-${{ matrix.symfony-versions }}-composer
-
-      - name: Update Symfony version
-        if: matrix.symfony-versions != ''
-        run: |
-          composer require symfony/framework-bundle:${{ matrix.symfony-versions }} --no-update --no-scripts
-          composer require doctrine/orm:${{ matrix.doctrine-orm-versions }} --no-update --no-scripts
-          composer require --dev doctrine/migrations:${{ matrix.doctrine-migrations }} --no-update --no-scripts
-          composer require --dev doctrine/doctrine-fixtures-bundle:${{ matrix.doctrine-fixtures-bundle }} --no-update --no-scripts
-          composer require --dev symfony/yaml:${{ matrix.symfony-versions }} --no-update --no-scripts
-
-      - name: Install dependencies
-        run: composer install
-
-      - name: Run PHPUnit tests
-        run: vendor/bin/phpunit
-        if: matrix.coverage == 'none'
-
-      - name: PHPUnit tests and Log Code coverage
-        run: vendor/bin/phpunit --coverage-clover=coverage.xml
-        if: matrix.coverage == 'xdebug'
-
-      - name: Upload coverage reports to Codecov
-        if: matrix.coverage == 'xdebug'
-        uses: codecov/codecov-action@v4.0.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-
-  integration:
-    name: Integration (PostgreSQL ${{ matrix.postgres }} + PgBouncer transaction pooling)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        postgres:
-          - '14'
-          - '18'
     services:
       postgres:
-        image: postgres:${{ matrix.postgres }}-alpine
+        image: postgres:${{ matrix.postgres || '14' }}-alpine
         env:
           POSTGRES_USER: app
           POSTGRES_PASSWORD: app
@@ -147,22 +89,63 @@ jobs:
       DIRECT_DATABASE_URL: pgsql://app:app@127.0.0.1:5432/app
       PGBOUNCER_DATABASE_URL: pgsql://app:app@127.0.0.1:6432/app
 
+    name: PHP ${{ matrix.php }} Symfony ${{ matrix.symfony-versions }} Doctrine ${{ matrix.doctrine-orm-versions }} Doctrine migrations ${{ matrix.doctrine-migrations }} Doctrine fixtures bundle ${{ matrix.doctrine-fixtures-bundle }} ${{ matrix.description }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ matrix.php }}-${{ matrix.symfony-versions }}
+
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          php-version: ${{ matrix.php }}
           extensions: pdo_pgsql
-          coverage: none
+          coverage: xdebug
+
+      - name: Add PHPUnit matcher
+        run: echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
+
+      - name: Set composer cache directory
+        id: composer-cache
+        run: echo "::set-output name=dir::$(composer config cache-files-dir)"
+
+      - name: Cache composer
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-${{ matrix.php }}-${{ matrix.symfony-versions }}-composer-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.php }}-${{ matrix.symfony-versions }}-composer
+
+      - name: Update Symfony version
+        if: matrix.symfony-versions != ''
+        run: |
+          composer require symfony/framework-bundle:${{ matrix.symfony-versions }} --no-update --no-scripts
+          composer require doctrine/orm:${{ matrix.doctrine-orm-versions }} --no-update --no-scripts
+          composer require --dev doctrine/migrations:${{ matrix.doctrine-migrations }} --no-update --no-scripts
+          composer require --dev doctrine/doctrine-fixtures-bundle:${{ matrix.doctrine-fixtures-bundle }} --no-update --no-scripts
+          composer require --dev symfony/yaml:${{ matrix.symfony-versions }} --no-update --no-scripts
 
       - name: Install dependencies
-        run: composer install --no-interaction --no-progress
+        run: composer install
 
       - name: Wait for PgBouncer
         run: timeout 60 sh -c 'until pg_isready -h 127.0.0.1 -p 6432 -U app; do sleep 1; done'
 
-      - name: Run integration tests
-        run: vendor/bin/phpunit --testsuite integration --fail-on-skipped --no-coverage
+      - name: Run PHPUnit tests
+        run: vendor/bin/phpunit --fail-on-skipped
+        if: matrix.coverage == 'none'
+
+      - name: PHPUnit tests and Log Code coverage
+        run: vendor/bin/phpunit --fail-on-skipped --coverage-clover=coverage.xml
+        if: matrix.coverage == 'xdebug'
+
+      - name: Upload coverage reports to Codecov
+        if: matrix.coverage == 'xdebug'
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
