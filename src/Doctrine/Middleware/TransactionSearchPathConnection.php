@@ -63,7 +63,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         return $this->runWithSearchPath(fn (): int => parent::exec($sql));
     }
 
-    public function beginTransaction()
+    public function beginTransaction(): bool
     {
         $result = parent::beginTransaction();
         $this->startTransaction();
@@ -84,7 +84,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         return $result;
     }
 
-    public function commit()
+    public function commit(): bool
     {
         try {
             return parent::commit();
@@ -93,7 +93,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         }
     }
 
-    public function rollBack()
+    public function rollBack(): bool
     {
         try {
             return parent::rollBack();

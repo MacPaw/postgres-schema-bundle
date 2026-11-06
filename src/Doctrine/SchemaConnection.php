@@ -156,9 +156,13 @@ class SchemaConnection extends DBALConnection
         return '"' . str_replace('"', '""', $schema) . '"';
     }
 
-    private static function logTransactionSearchPath(string $quotedSchema, bool $isInTransaction): void
+    /**
+     * @param bool $isCallerTransaction true when SET LOCAL runs in a transaction opened by the caller,
+     *                                  false when the bundle wraps a single statement in its own transaction
+     */
+    private static function logTransactionSearchPath(string $quotedSchema, bool $isCallerTransaction): void
     {
-        self::$logger?->logApplySearchPath($quotedSchema, false, $isInTransaction);
+        self::$logger?->logApplySearchPath($quotedSchema, false, $isCallerTransaction);
     }
 
     private function getActualSearchPath(): ?string

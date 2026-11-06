@@ -55,8 +55,10 @@ final class SearchPathPgbouncerTest extends TestCase
 
     protected function setUp(): void
     {
-        if (self::url('PGBOUNCER_DATABASE_URL') === null) {
-            self::markTestSkipped('PGBOUNCER_DATABASE_URL is not set; run via docker compose.');
+        if (self::url('PGBOUNCER_DATABASE_URL') === null || self::url('DIRECT_DATABASE_URL') === null) {
+            self::markTestSkipped(
+                'PGBOUNCER_DATABASE_URL and DIRECT_DATABASE_URL must be set; run via docker compose.',
+            );
         }
 
         $this->resetServerSessions();
