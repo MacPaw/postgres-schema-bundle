@@ -56,6 +56,10 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 
     public function exec(string $sql): int
     {
+        if (!($this->isActive)()) {
+            return parent::exec($sql);
+        }
+
         if ($this->isTransactionControl($sql)) {
             return $this->execTransactionControl($sql);
         }
@@ -167,7 +171,13 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
             throw $exception;
         }
 
-        parent::exec('COMMIT');
+        try {
+            parent::exec('COMMIT');
+        } catch (Throwable $exception) {
+            $this->rollBackQuietly();
+
+            throw $exception;
+        }
 
         return $result;
     }

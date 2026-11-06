@@ -48,6 +48,10 @@ final class SearchPathPgbouncerTest extends TestCase
         $direct->executeStatement(
             'CREATE TABLE ' . $previewSchema . '.marker (id serial PRIMARY KEY, v text NOT NULL)',
         );
+        $direct->executeStatement(
+            'CREATE TABLE ' . $previewSchema . '.deferred_unique'
+            . ' (v text, CONSTRAINT deferred_unique_v UNIQUE (v) DEFERRABLE INITIALLY DEFERRED)',
+        );
         $direct->insert('public.marker', ['v' => self::PUBLIC_MARKER]);
         $direct->insert(self::PREVIEW_SCHEMA . '.marker', ['v' => self::PREVIEW_MARKER]);
         $direct->close();
@@ -251,6 +255,22 @@ final class SearchPathPgbouncerTest extends TestCase
         }
 
         self::assertSame(0, $this->countOpenServerTransactions());
+    }
+
+    public function testTransactionModeRecoversWhenImplicitCommitFails(): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        try {
+            $preview->executeStatement("INSERT INTO deferred_unique (v) VALUES ('dup'), ('dup')");
+            self::fail('The deferred unique constraint must fail on COMMIT.');
+        } catch (DBALException) {
+        }
+
+        self::assertSame(0, $this->countOpenServerTransactions());
+        self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
     }
 
     public function testTransactionModeRecoversAfterFailedStatement(): void

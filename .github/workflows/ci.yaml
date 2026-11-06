@@ -55,6 +55,7 @@ jobs:
             doctrine-orm-versions: '^3.0'
             doctrine-migrations: '3.9.*'
             doctrine-fixtures-bundle: '4.0.*'
+            coverage: 'none'
             postgres: '18'
 
     services:
