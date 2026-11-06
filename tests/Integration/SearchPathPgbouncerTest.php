@@ -223,6 +223,9 @@ final class SearchPathPgbouncerTest extends TestCase
         yield 'commit' => ['COMMIT'];
         yield 'rollback and chain' => ["-- app\nROLLBACK AND CHAIN"];
         yield 'batch' => ["BEGIN; INSERT INTO marker (v) VALUES ('batch'); COMMIT"];
+        yield 'nested comment before commit' => [
+            "/* outer /* inner */ tail */ COMMIT; INSERT INTO marker (v) VALUES ('batch')",
+        ];
     }
 
     #[DataProvider('rawTransactionControlProvider')]
@@ -305,8 +308,10 @@ final class SearchPathPgbouncerTest extends TestCase
         $this->resolver->setSchema(self::PREVIEW_SCHEMA);
 
         $preview->executeStatement("INSERT INTO marker (v) VALUES ('a; COMMIT')");
+        $preview->executeStatement("INSERT INTO marker (v) VALUES (E'it\\'s; COMMIT')");
 
         self::assertSame(1, $this->countDirect(self::PREVIEW_SCHEMA, 'a; COMMIT'));
+        self::assertSame(1, $this->countDirect(self::PREVIEW_SCHEMA, "it's; COMMIT"));
     }
 
     public function testTransactionModeClosesImplicitTransactionWhenApplyFails(): void

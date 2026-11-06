@@ -107,7 +107,8 @@ In transaction mode:
   statements. A single savepoint statement (`SAVEPOINT`, `RELEASE`, `ROLLBACK TO`), which DBAL uses for nested
   transactions, runs as is.
 - The mode is applied when a physical connection opens. An idle connection opened in the other mode is reopened;
-  changing the mode while a transaction is open throws `TransactionSearchPathModeException`.
+  changing the mode while a transaction is open throws `TransactionSearchPathModeException`. Set the mode in
+  `Kernel::boot()` before running queries: statements prepared before the switch keep the old mode.
 - In the default `Session` mode the driver connection is not wrapped, and the bundle behaves exactly as before.
 
 Choosing `$serverDefaultSchema`:

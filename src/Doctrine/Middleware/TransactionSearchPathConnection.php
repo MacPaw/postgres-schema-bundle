@@ -22,8 +22,17 @@ use Throwable;
  */
 final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 {
-    /** String literals, quoted identifiers, dollar-quoted bodies and comments: removed before splitting on ';'. */
-    private const NON_CODE_PATTERN = '/\'(?:\'\'|[^\'])*\'|"(?:""|[^"])*"|\$(\w*)\$.*?\$\1\$|\/\*.*?\*\/|--[^\n]*/s';
+    /**
+     * Parts of SQL that may contain ';' without ending a statement, removed before splitting on ';':
+     * E'' escape strings, string literals, quoted identifiers, dollar-quoted bodies, nested block comments
+     * and line comments.
+     */
+    private const NON_CODE_PATTERN = '/[Ee]\'(?:\\\\.|\'\'|[^\'\\\\])*\''
+        . '|\'(?:\'\'|[^\'])*\''
+        . '|"(?:""|[^"])*"'
+        . '|\$(?<tag>\w*)\$.*?\$\k<tag>\$'
+        . '|(?<comment>\/\*(?:[^\/*]|\/(?!\*)|\*(?!\/)|(?&comment))*\*\/)'
+        . '|--[^\n]*/s';
     private const PREPARED_2PC_PATTERN = '/^(?:COMMIT|ROLLBACK)\s+PREPARED\b/i';
     private const ROLLBACK_TO_PATTERN = '/^ROLLBACK\s+(?:(?:WORK|TRANSACTION)\s+)?TO\b/i';
     private const SAVEPOINT_PATTERN = '/^(?:SAVEPOINT|RELEASE)\b/i';
