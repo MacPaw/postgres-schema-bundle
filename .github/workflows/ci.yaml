@@ -8,6 +8,9 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -142,6 +145,33 @@ jobs:
       - name: PHPUnit tests and Log Code coverage
         run: vendor/bin/phpunit --fail-on-skipped --coverage-clover=coverage.xml
         if: matrix.coverage == 'xdebug'
+
+      - name: Generate code coverage status
+        id: code-coverage-analyze
+        if: matrix.coverage == 'xdebug'
+        run: |
+          exit_code=0
+          coverage_result="$(vendor/bin/coverage-check coverage.xml "${MIN_CODE_COVERAGE}")" || exit_code=$?
+          echo "${coverage_result}"
+          echo "analyze-text=${coverage_result}" >> "${GITHUB_OUTPUT}"
+          exit "${exit_code}"
+        env:
+          MIN_CODE_COVERAGE: 80
+
+      - name: Create code coverage comment
+        if: >-
+          always()
+          && matrix.coverage == 'xdebug'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && steps.code-coverage-analyze.outputs.analyze-text
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3.12.0
+        with:
+          message-id: code-coverage-comment
+          refresh-message-position: true
+          message: |
+            [postgres-schema-bundle] (PHP ${{ matrix.php }}, Symfony ${{ matrix.symfony-versions }}) ${{ steps.code-coverage-analyze.outcome == 'success' && '✅' || '❌' }} ${{ steps.code-coverage-analyze.outputs.analyze-text }}
+            ${{ steps.code-coverage-analyze.outcome == 'success' && 'Well done, sailor! 🚣' || 'Please add more tests to your functionality :man_shrugging:' }}
 
       - name: Upload coverage reports to Codecov
         if: matrix.coverage == 'xdebug'
