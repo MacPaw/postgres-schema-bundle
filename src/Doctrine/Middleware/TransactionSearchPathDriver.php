@@ -7,8 +7,8 @@ namespace Macpaw\PostgresSchemaBundle\Doctrine\Middleware;
 use Closure;
 use Doctrine\DBAL\Driver;
 use Doctrine\DBAL\Driver\Middleware\AbstractDriverMiddleware;
-use Doctrine\DBAL\Driver\PgSQL\Driver as NativePgSQLDriver;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedDriverException;
+use PDO;
 use SensitiveParameter;
 
 final class TransactionSearchPathDriver extends AbstractDriverMiddleware
@@ -21,7 +21,7 @@ final class TransactionSearchPathDriver extends AbstractDriverMiddleware
      *                                                    the transaction was opened by the caller
      */
     public function __construct(
-        private readonly Driver $wrappedDriver,
+        Driver $wrappedDriver,
         private readonly Closure $isActive,
         private readonly Closure $schemaProvider,
         private readonly Closure $onApply,
@@ -31,13 +31,20 @@ final class TransactionSearchPathDriver extends AbstractDriverMiddleware
 
     public function connect(#[SensitiveParameter] array $params): Driver\Connection
     {
-        // The native pgsql driver prepares statements immediately, before SET LOCAL is applied.
-        if (($this->isActive)() && $this->wrappedDriver instanceof NativePgSQLDriver) {
-            throw new UnsupportedDriverException('pgsql');
+        $connection = parent::connect($params);
+
+        // Only pdo_pgsql defers statement preparation to execution, inside SET LOCAL. The check looks at the
+        // native connection, so it also works when other driver middlewares wrap the driver.
+        if (($this->isActive)()) {
+            $native = method_exists($connection, 'getNativeConnection') ? $connection->getNativeConnection() : null;
+
+            if (!$native instanceof PDO) {
+                throw new UnsupportedDriverException(get_debug_type($native));
+            }
         }
 
         return new TransactionSearchPathConnection(
-            parent::connect($params),
+            $connection,
             $this->isActive,
             $this->schemaProvider,
             $this->onApply,

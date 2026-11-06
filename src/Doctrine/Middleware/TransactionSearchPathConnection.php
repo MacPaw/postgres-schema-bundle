@@ -15,14 +15,21 @@ use Throwable;
  * Applies search_path with SET LOCAL, so it never outlives the transaction and cannot leak to other clients
  * through a PgBouncer server connection in transaction pooling mode.
  *
- * While $isActive returns false the connection passes every call through unchanged.
+ * While $isActive returns false every statement is sent unchanged; only transaction control SQL is tracked.
  */
 final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 {
-    private const BEGIN_PATTERN = '/^\s*(BEGIN|START\s+TRANSACTION)\b/i';
-    private const END_PATTERN = '/^\s*(COMMIT|END|ABORT|ROLLBACK(?!\s+TO\b))\b/i';
-    private const SAVEPOINT_PATTERN = '/^\s*(SAVEPOINT|RELEASE|ROLLBACK\s+TO)\b/i';
-    private const ROLLBACK_TO_PATTERN = '/^\s*ROLLBACK\s+TO\b/i';
+    /** Leading whitespace and SQL comments before the first keyword. */
+    private const PREFIX = '/^(?:\s+|\/\*.*?\*\/|--[^\n]*(?:\n|$))*';
+    private const BEGIN_PATTERN = self::PREFIX . '(?:BEGIN|START\s+TRANSACTION)\b/is';
+    private const ROLLBACK_TO_PATTERN = self::PREFIX . 'ROLLBACK\s+(?:(?:WORK|TRANSACTION)\s+)?TO\b/is';
+    private const END_PATTERN = self::PREFIX . '(?:COMMIT|END|ABORT|ROLLBACK)\b/is';
+    private const SAVEPOINT_PATTERN = self::PREFIX . '(?:SAVEPOINT|RELEASE)\b/is';
+
+    private const CONTROL_BEGIN = 'begin';
+    private const CONTROL_END = 'end';
+    private const CONTROL_ROLLBACK_TO = 'rollback_to';
+    private const CONTROL_SAVEPOINT = 'savepoint';
 
     private bool $inTransaction = false;
     private ?string $appliedSchema = null;
@@ -51,17 +58,21 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 
     public function query(string $sql): Result
     {
+        $control = $this->classifyTransactionControl($sql);
+
+        if ($control !== null) {
+            return $this->runTransactionControl($control, fn (): Result => parent::query($sql));
+        }
+
         return $this->runWithSearchPath(fn (): Result => parent::query($sql));
     }
 
     public function exec(string $sql): int
     {
-        if (!($this->isActive)()) {
-            return parent::exec($sql);
-        }
+        $control = $this->classifyTransactionControl($sql);
 
-        if ($this->isTransactionControl($sql)) {
-            return $this->execTransactionControl($sql);
+        if ($control !== null) {
+            return $this->runTransactionControl($control, fn (): int => parent::exec($sql));
         }
 
         return $this->runWithSearchPath(fn (): int => parent::exec($sql));
@@ -182,29 +193,44 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         return $result;
     }
 
-    private function isTransactionControl(string $sql): bool
+    /**
+     * @return self::CONTROL_*|null
+     */
+    private function classifyTransactionControl(string $sql): ?string
     {
-        return preg_match(self::BEGIN_PATTERN, $sql) === 1
-            || preg_match(self::END_PATTERN, $sql) === 1
-            || ($this->inTransaction && preg_match(self::SAVEPOINT_PATTERN, $sql) === 1);
+        return match (true) {
+            preg_match(self::BEGIN_PATTERN, $sql) === 1 => self::CONTROL_BEGIN,
+            preg_match(self::ROLLBACK_TO_PATTERN, $sql) === 1 => self::CONTROL_ROLLBACK_TO,
+            preg_match(self::END_PATTERN, $sql) === 1 => self::CONTROL_END,
+            preg_match(self::SAVEPOINT_PATTERN, $sql) === 1 => self::CONTROL_SAVEPOINT,
+            default => null,
+        };
     }
 
     /**
-     * Transaction control SQL runs as is: no SET LOCAL before it (it would fail in an aborted transaction
-     * and block the recovery) and no implicit transaction around it (it would end the caller's transaction).
+     * Transaction control SQL runs as is in every mode: no SET LOCAL before it (it would fail in an aborted
+     * transaction and block the recovery) and no implicit transaction around it (it would end the caller's
+     * transaction). Its effect is tracked even while the mode is inactive, so the state stays correct
+     * if the mode is switched on later.
+     *
+     * @template T
+     *
+     * @param self::CONTROL_* $control
+     * @param Closure(): T    $operation
+     *
+     * @return T
      */
-    private function execTransactionControl(string $sql): int
+    private function runTransactionControl(string $control, Closure $operation): mixed
     {
-        $result = parent::exec($sql);
+        $result = $operation();
 
-        if (preg_match(self::BEGIN_PATTERN, $sql) === 1) {
-            $this->startTransaction();
-        } elseif (preg_match(self::END_PATTERN, $sql) === 1) {
-            $this->endTransaction();
-        } elseif (preg_match(self::ROLLBACK_TO_PATTERN, $sql) === 1) {
+        match ($control) {
+            self::CONTROL_BEGIN => $this->startTransaction(),
+            self::CONTROL_END => $this->endTransaction(),
             // A SET LOCAL issued after the savepoint is undone with it, so re-apply before the next query.
-            $this->isAppliedSchemaKnown = false;
-        }
+            self::CONTROL_ROLLBACK_TO => $this->isAppliedSchemaKnown = false,
+            self::CONTROL_SAVEPOINT => null,
+        };
 
         return $result;
     }

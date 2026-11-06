@@ -11,7 +11,7 @@ class UnsupportedDriverException extends RuntimeException
     public function __construct(string $driver)
     {
         parent::__construct(
-            "Unsupported database driver: {$driver}. Transaction search_path mode requires pdo_pgsql.",
+            "Unsupported database connection: {$driver}. Transaction search_path mode requires pdo_pgsql.",
         );
     }
 }

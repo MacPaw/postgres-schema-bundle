@@ -101,7 +101,9 @@ In transaction mode:
   `ROLLBACK TO SAVEPOINT`.
 - Plain queries, executed statements and prepared statements (Doctrine ORM) are all covered.
 - The schema commands below only set the schema in the resolver; they do not issue a session `SET`.
-- Transaction control SQL (`BEGIN`, `COMMIT`, `ROLLBACK`, savepoints) runs as is, without `SET LOCAL` before it.
+- Transaction control SQL (`BEGIN`, `COMMIT`, `ROLLBACK`, savepoints) sent with `executeStatement()` or
+  `executeQuery()` runs as is, without `SET LOCAL` before it. Send it as a plain statement, not as a prepared
+  statement with parameters.
 - In the default `Session` mode statements pass through unchanged.
 
 Choosing `$serverDefaultSchema`:
@@ -119,6 +121,9 @@ Limitations:
 - Only the `pdo_pgsql` driver is supported. It prepares a statement when it is executed, inside `SET LOCAL`.
   The native `pgsql` driver prepares immediately, against the server default `search_path`, so it is rejected
   with `UnsupportedDriverException`.
+- `pdo_pgsql` uses server-side prepared statements, and a statement reused outside a transaction can run on
+  another server connection. PgBouncer must track prepared statements: version 1.21+ with
+  `max_prepared_statements` greater than 0 (the default since 1.22).
 - A statement outside a transaction is committed before its result is fetched. This relies on `pdo_pgsql`
   buffering the whole result (the default); do not enable lazy (unbuffered) result fetching.
 - Statements that cannot run inside a transaction block (`CREATE INDEX CONCURRENTLY`, `VACUUM`, migrations with

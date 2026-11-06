@@ -8,7 +8,7 @@ use Doctrine\Common\EventManager;
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Driver;
 use Doctrine\DBAL\Driver\Connection as DriverConnection;
-use Doctrine\DBAL\Driver\PgSQL\Driver as NativePgSQLDriver;
+use Doctrine\DBAL\Driver\Middleware\AbstractConnectionMiddleware;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
@@ -17,7 +17,9 @@ use Macpaw\PostgresSchemaBundle\Exception\UnsupportedDriverException;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
+use PDO;
 use PHPUnit\Framework\TestCase;
+use stdClass;
 
 class SchemaConnectionTest extends TestCase
 {
@@ -165,7 +167,8 @@ class SchemaConnectionTest extends TestCase
 
     public function testTransactionModeThrowsForUnsupportedPlatform(): void
     {
-        $driverConnection = $this->createMock(DriverConnection::class);
+        $driverConnection = $this->createMock(AbstractConnectionMiddleware::class);
+        $driverConnection->method('getNativeConnection')->willReturn($this->createMock(PDO::class));
         $driverConnection->expects($this->never())->method('exec');
         $driver = $this->createMock(Driver::class);
         $driver->method('connect')->willReturn($driverConnection);
@@ -189,10 +192,13 @@ class SchemaConnectionTest extends TestCase
         }
     }
 
-    public function testTransactionModeRejectsNativePgsqlDriver(): void
+    public function testTransactionModeRejectsNonPdoConnection(): void
     {
-        $driver = $this->createMock(NativePgSQLDriver::class);
-        $driver->expects($this->never())->method('connect');
+        $driverConnection = $this->createMock(AbstractConnectionMiddleware::class);
+        $driverConnection->method('getNativeConnection')->willReturn(new stdClass());
+        $driverConnection->expects($this->never())->method('exec');
+        $driver = $this->createMock(Driver::class);
+        $driver->method('connect')->willReturn($driverConnection);
         $connection = new SchemaConnection([], $driver, new Configuration(), new EventManager());
 
         SchemaConnection::setSchemaResolver(

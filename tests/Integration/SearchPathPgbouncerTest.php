@@ -224,6 +224,32 @@ final class SearchPathPgbouncerTest extends TestCase
         self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
     }
 
+    public function testTransactionModeKeepsRawTransactionControlSentThroughQueryWithComments(): void
+    {
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $preview = $this->connect();
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        $preview->executeQuery('/* app */ BEGIN');
+        $preview->insert('marker', ['v' => 'raw-query-tx']);
+        $preview->executeQuery("-- app\nROLLBACK");
+
+        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'raw-query-tx'));
+    }
+
+    public function testRawTransactionStartedBeforeTransactionModeIsSwitchedOnStaysOpen(): void
+    {
+        $preview = $this->connect();
+        $preview->executeStatement('START TRANSACTION');
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+        $this->resolver->setSchema(self::PREVIEW_SCHEMA);
+
+        $preview->insert('marker', ['v' => 'late-mode']);
+        $preview->executeStatement('ROLLBACK');
+
+        self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'late-mode'));
+    }
+
     public function testTransactionModeClosesImplicitTransactionWhenApplyFails(): void
     {
         SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
