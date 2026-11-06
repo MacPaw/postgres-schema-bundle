@@ -8,9 +8,12 @@ use Doctrine\Common\EventManager;
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Driver;
 use Doctrine\DBAL\Driver\Connection as DriverConnection;
+use Doctrine\DBAL\Driver\PgSQL\Driver as NativePgSQLDriver;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
 use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
+use Macpaw\PostgresSchemaBundle\Doctrine\SearchPathMode;
+use Macpaw\PostgresSchemaBundle\Exception\UnsupportedDriverException;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
@@ -158,5 +161,50 @@ class SchemaConnectionTest extends TestCase
         SchemaConnection::setSchemaResolver($resolver);
 
         $connection->connect();
+    }
+
+    public function testTransactionModeThrowsForUnsupportedPlatform(): void
+    {
+        $driverConnection = $this->createMock(DriverConnection::class);
+        $driverConnection->expects($this->never())->method('exec');
+        $driver = $this->createMock(Driver::class);
+        $driver->method('connect')->willReturn($driverConnection);
+
+        $connection = $this->getMockBuilder(SchemaConnection::class)
+            ->setConstructorArgs([[], $driver, new Configuration(), new EventManager()])
+            ->onlyMethods(['getDatabasePlatform'])
+            ->getMock();
+        $connection->method('getDatabasePlatform')->willReturn(new MySQLPlatform());
+
+        SchemaConnection::setSchemaResolver(
+            new BaggageSchemaResolver('public', 'development', ['development'], new DebugLogger()),
+        );
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+
+        try {
+            $this->expectException(UnsupportedPlatformException::class);
+            $connection->connect();
+        } finally {
+            SchemaConnection::setSearchPathMode(SearchPathMode::Session);
+        }
+    }
+
+    public function testTransactionModeRejectsNativePgsqlDriver(): void
+    {
+        $driver = $this->createMock(NativePgSQLDriver::class);
+        $driver->expects($this->never())->method('connect');
+        $connection = new SchemaConnection([], $driver, new Configuration(), new EventManager());
+
+        SchemaConnection::setSchemaResolver(
+            new BaggageSchemaResolver('public', 'development', ['development'], new DebugLogger()),
+        );
+        SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+
+        try {
+            $this->expectException(UnsupportedDriverException::class);
+            $connection->connect();
+        } finally {
+            SchemaConnection::setSearchPathMode(SearchPathMode::Session);
+        }
     }
 }

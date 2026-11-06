@@ -103,3 +103,66 @@ jobs:
         uses: codecov/codecov-action@v4.0.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  integration:
+    name: Integration (PostgreSQL ${{ matrix.postgres }} + PgBouncer transaction pooling)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres:
+          - '14'
+          - '18'
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: --auth=scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+      pgbouncer:
+        image: edoburu/pgbouncer:v1.24.1-p1
+        env:
+          DB_HOST: postgres
+          DB_USER: app
+          DB_PASSWORD: app
+          DB_NAME: app
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          DEFAULT_POOL_SIZE: 1
+          MAX_PREPARED_STATEMENTS: 200
+        ports:
+          - 6432:5432
+
+    env:
+      DIRECT_DATABASE_URL: pgsql://app:app@127.0.0.1:5432/app
+      PGBOUNCER_DATABASE_URL: pgsql://app:app@127.0.0.1:6432/app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Wait for PgBouncer
+        run: timeout 60 sh -c 'until pg_isready -h 127.0.0.1 -p 6432 -U app; do sleep 1; done'
+
+      - name: Run integration tests
+        run: vendor/bin/phpunit --testsuite integration --fail-on-skipped

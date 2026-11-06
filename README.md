@@ -68,6 +68,66 @@ class Kernel extends BaseKernel
 }
 ```
 
+### Search path mode (PgBouncer transaction pooling)
+
+By default the bundle sets `search_path` once per database session (`SET search_path TO ...`).
+This is safe only with a direct connection or PgBouncer in **session** pooling mode.
+Behind PgBouncer in **transaction** pooling mode a session setting stays on the pooled server connection
+and leaks to other clients: their queries run in another schema.
+
+Switch to the transaction mode at kernel boot, next to `setSchemaResolver()`:
+
+```php
+use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
+use Macpaw\PostgresSchemaBundle\Doctrine\SearchPathMode;
+
+SchemaConnection::setSearchPathMode(SearchPathMode::Transaction);
+```
+
+`SchemaConnection::setSearchPathMode(SearchPathMode $mode, ?string $serverDefaultSchema = null)`:
+
+| Argument | Value | Behaviour |
+|---|---|---|
+| `$mode` | `SearchPathMode::Session` (default) | `SET search_path` once per connection; current behaviour |
+| | `SearchPathMode::Transaction` | `SET LOCAL search_path` inside every transaction; the setting never outlives the transaction |
+| `$serverDefaultSchema` | `null` (strict, default) | `SET LOCAL` for every schema, including the default one |
+| | `'public'` or another schema | queries for this schema run without `SET LOCAL` and rely on the server default `search_path` |
+
+In transaction mode:
+
+- A statement outside a transaction runs as `BEGIN; SET LOCAL search_path TO "<schema>"`, the statement, then `COMMIT`
+  (`ROLLBACK` on error): two extra round trips.
+- Inside a transaction `SET LOCAL` runs once after `BEGIN`, and again only when the schema changes or after
+  `ROLLBACK TO SAVEPOINT`.
+- Plain queries, executed statements and prepared statements (Doctrine ORM) are all covered.
+- The schema commands below only set the schema in the resolver; they do not issue a session `SET`.
+- Transaction control SQL (`BEGIN`, `COMMIT`, `ROLLBACK`, savepoints) runs as is, without `SET LOCAL` before it.
+- In the default `Session` mode statements pass through unchanged.
+
+Choosing `$serverDefaultSchema`:
+
+- Use `null` while any client of the same database still sets a session `search_path`: pods on an older bundle
+  version during rollout, session-mode services sharing the pool, manual `psql` sessions.
+  Otherwise default-schema queries inherit the leaked setting.
+- Pass the schema only when every client of the database uses transaction mode and the server default
+  `search_path` (role or database setting) resolves to that schema.
+  For an environment whose default schema is not `public`, set it first with
+  `ALTER ROLE ... SET search_path` or `ALTER DATABASE ... SET search_path`.
+
+Limitations:
+
+- Only the `pdo_pgsql` driver is supported. It prepares a statement when it is executed, inside `SET LOCAL`.
+  The native `pgsql` driver prepares immediately, against the server default `search_path`, so it is rejected
+  with `UnsupportedDriverException`.
+- A statement outside a transaction is committed before its result is fetched. This relies on `pdo_pgsql`
+  buffering the whole result (the default); do not enable lazy (unbuffered) result fetching.
+- Statements that cannot run inside a transaction block (`CREATE INDEX CONCURRENTLY`, `VACUUM`, migrations with
+  `isTransactional() = false`) fail for a schema that needs `SET LOCAL`.
+- `lastInsertId()` outside a transaction runs after the implicit `COMMIT`, possibly on another server connection
+  and without the schema `search_path`: `LASTVAL()` and `CURRVAL('<sequence>')` can fail or return another value.
+  Fetch ids with `nextval()` (Doctrine ORM `SEQUENCE` strategy), `INSERT ... RETURNING`, or call `lastInsertId()`
+  inside the same explicit transaction as the insert.
+
 Make sure you configure the context bundle properly:
 
 See https://github.com/MacPaw/schema-context-bundle/blob/develop/README.md
@@ -83,7 +143,8 @@ schema_context:
 ## How it Works
 * A request comes in with a header like X-Tenant-Id: tenant123.
 * The SchemaRequestListener sets this schema in the context.
-* When Doctrine connects to PostgreSQL, it sets the search_path to the specified schema.
+* When Doctrine connects to PostgreSQL, it sets the search_path to the specified schema
+  (per session, or per transaction in `SearchPathMode::Transaction`).
 * If the schema does not exist or DB is not PostgreSQL, an exception is thrown.
 
 ## Optional Commands
@@ -148,10 +209,22 @@ php bin/console doctrine:schema:fixtures:load <schema_name> [options]
 **Note:** These commands are optional and should only be registered if you're using the corresponding Doctrine features (migrations and/or fixtures) in your project.
 
 ## Testing
-To run tests:
+Unit tests:
 ```bash
-vendor/bin/phpunit
+vendor/bin/phpunit --testsuite unit
 ```
+
+Integration tests run against PostgreSQL (14 by default, `POSTGRES_VERSION=18` for 18) behind PgBouncer in transaction pooling mode
+with a single server connection, so every client shares one server session:
+```bash
+docker compose up -d --build
+docker compose run --rm php composer install
+docker compose run --rm php vendor/bin/phpunit
+docker compose down
+```
+
+Without `DIRECT_DATABASE_URL` and `PGBOUNCER_DATABASE_URL` the integration tests are skipped.
+CI runs them in the `integration` job against PostgreSQL 14 and 18.
 ## Contributing
 Feel free to open issues and submit pull requests.
 

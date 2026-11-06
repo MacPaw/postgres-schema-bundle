@@ -4,18 +4,65 @@ declare(strict_types=1);
 
 namespace Macpaw\PostgresSchemaBundle\Doctrine;
 
+use Doctrine\Common\EventManager;
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection as DBALConnection;
+use Doctrine\DBAL\Driver;
+use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
+use Macpaw\PostgresSchemaBundle\Doctrine\Middleware\TransactionSearchPathDriver;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Throwable;
 
+/**
+ * @phpstan-import-type Params from DriverManager
+ */
 class SchemaConnection extends DBALConnection
 {
     private static ?BaggageSchemaResolver $schemaResolver = null;
     private static ?DebugLogger $logger = null;
+    private static SearchPathMode $searchPathMode = SearchPathMode::Session;
+    private static ?string $serverDefaultSchema = null;
     private ?string $currentSchema = null;
+
+    /**
+     * @param array<string, mixed> $params
+     * @phpstan-param Params $params
+     */
+    public function __construct(
+        array $params,
+        Driver $driver,
+        ?Configuration $config = null,
+        ?EventManager $eventManager = null,
+    ) {
+        $driver = new TransactionSearchPathDriver(
+            $driver,
+            self::isTransactionSearchPathActive(...),
+            self::resolveTransactionSearchPath(...),
+            self::logTransactionSearchPath(...),
+        );
+
+        parent::__construct($params, $driver, $config, $eventManager);
+    }
+
+    /**
+     * @param string|null $serverDefaultSchema null (strict, default) applies SET LOCAL to every query, ignoring any
+     *                                         session search_path another client left on the pooled server
+     *                                         connection. A schema name skips SET LOCAL for that schema and relies
+     *                                         on the server default search_path (role/database setting).
+     */
+    public static function setSearchPathMode(SearchPathMode $mode, ?string $serverDefaultSchema = null): void
+    {
+        self::$searchPathMode = $mode;
+        self::$serverDefaultSchema = $serverDefaultSchema;
+    }
+
+    public static function getSearchPathMode(): SearchPathMode
+    {
+        return self::$searchPathMode;
+    }
 
     public static function setSchemaResolver(BaggageSchemaResolver $resolver): void
     {
@@ -29,7 +76,9 @@ class SchemaConnection extends DBALConnection
 
     public function close(): void
     {
-        self::$logger?->logSchemaResetByConnectionClose($this->currentSchema ?? '');
+        if ($this->currentSchema !== null) {
+            self::$logger?->logSchemaResetByConnectionClose($this->currentSchema);
+        }
 
         parent::close();
 
@@ -38,7 +87,9 @@ class SchemaConnection extends DBALConnection
 
     public function rollBack(): bool
     {
-        self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema ?? '');
+        if ($this->currentSchema !== null) {
+            self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema);
+        }
 
         $result = parent::rollBack();
 
@@ -52,6 +103,14 @@ class SchemaConnection extends DBALConnection
         $isNewConnection = parent::connect();
 
         if (self::$schemaResolver === null) {
+            return $isNewConnection;
+        }
+
+        if (self::$searchPathMode === SearchPathMode::Transaction) {
+            if ($isNewConnection) {
+                $this->ensurePostgreSql();
+            }
+
             return $isNewConnection;
         }
 
@@ -75,6 +134,31 @@ class SchemaConnection extends DBALConnection
         $this->applySearchPath($schema, $isNewConnection);
 
         return $isNewConnection;
+    }
+
+    private static function isTransactionSearchPathActive(): bool
+    {
+        return self::$searchPathMode === SearchPathMode::Transaction && self::$schemaResolver !== null;
+    }
+
+    private static function resolveTransactionSearchPath(): ?string
+    {
+        if (self::$schemaResolver === null) {
+            return null;
+        }
+
+        $schema = self::$schemaResolver->getSchema();
+
+        if (self::$serverDefaultSchema !== null && $schema === self::$serverDefaultSchema) {
+            return null;
+        }
+
+        return '"' . str_replace('"', '""', $schema) . '"';
+    }
+
+    private static function logTransactionSearchPath(string $quotedSchema, bool $isInTransaction): void
+    {
+        self::$logger?->logApplySearchPath($quotedSchema, false, $isInTransaction);
     }
 
     private function getActualSearchPath(): ?string
