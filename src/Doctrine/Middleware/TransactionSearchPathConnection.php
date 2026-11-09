@@ -19,6 +19,10 @@ use Throwable;
  * Transactions must be managed through the DBAL API (beginTransaction(), commit(), rollBack(), transactional()).
  * Raw BEGIN/COMMIT/ROLLBACK SQL is rejected; savepoint SQL, which DBAL sends for nested transactions, is allowed
  * as a single statement. Transaction control or savepoint SQL batched with other statements is rejected.
+ *
+ * The SQL classification is a guard, not a parser: SQL it cannot split reliably is rejected, and after every
+ * statement the server transaction status is compared with the expected one, so transaction control that slips
+ * past the classification fails loudly instead of running later statements without SET LOCAL.
  */
 final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
 {
@@ -33,6 +37,8 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         . '|\$(?<tag>\w*)\$.*?\$\k<tag>\$'
         . '|(?<comment>\/\*(?:[^\/*]|\/(?!\*)|\*(?!\/)|(?&comment))*\*\/)'
         . '|--[^\n]*/s';
+    /** Quotes, comment or dollar-quote delimiters left after removing non-code mean the SQL was not split reliably. */
+    private const UNBALANCED_PATTERN = '/[\'"]|\/\*|\*\/|\$\w*\$/';
     private const PREPARED_2PC_PATTERN = '/^(?:COMMIT|ROLLBACK)\s+PREPARED\b/i';
     private const ROLLBACK_TO_PATTERN = '/^ROLLBACK\s+(?:(?:WORK|TRANSACTION)\s+)?TO\b/i';
     private const SAVEPOINT_PATTERN = '/^(?:SAVEPOINT|RELEASE)\b/i';
@@ -49,15 +55,17 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
     private bool $isAppliedSchemaKnown = true;
 
     /**
-     * @param Closure(): ?string          $schemaProvider returns the quoted schema to apply,
-     *                                                    or null to keep the server default
-     * @param Closure(string, bool): void $onApply        called with the quoted schema and whether
-     *                                                    the transaction was opened by the caller
+     * @param Closure(): ?string          $schemaProvider        returns the quoted schema to apply,
+     *                                                           or null to keep the server default
+     * @param Closure(string, bool): void $onApply               called with the quoted schema and whether
+     *                                                           the transaction was opened by the caller
+     * @param Closure(): bool             $isServerInTransaction whether the server session has an open transaction
      */
     public function __construct(
         Connection $wrappedConnection,
         private readonly Closure $schemaProvider,
         private readonly Closure $onApply,
+        private readonly Closure $isServerInTransaction,
     ) {
         parent::__construct($wrappedConnection);
     }
@@ -130,15 +138,20 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
     public function runWithSearchPath(Closure $operation): mixed
     {
         if ($this->inTransaction) {
+            // Outside a server transaction SET LOCAL is a no-op, so refuse to run after the transaction was lost.
+            if (!($this->isServerInTransaction)()) {
+                throw TransactionSearchPathModeException::rawTransactionControl();
+            }
+
             $this->applyInTransaction();
 
-            return $operation();
+            return $this->runExpectingServerTransaction(true, $operation);
         }
 
         $schema = ($this->schemaProvider)();
 
         if ($schema === null) {
-            return $operation();
+            return $this->runExpectingServerTransaction(false, $operation);
         }
 
         return $this->runInImplicitTransaction($schema, $operation);
@@ -170,7 +183,7 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
         try {
             parent::exec('BEGIN; SET LOCAL search_path TO ' . $schema);
             ($this->onApply)($schema, false);
-            $result = $operation();
+            $result = $this->runExpectingServerTransaction(true, $operation);
         } catch (Throwable $exception) {
             $this->rollBackQuietly();
 
@@ -201,7 +214,10 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
             null => $this->runWithSearchPath($operation),
             self::KIND_CONTROL => throw TransactionSearchPathModeException::rawTransactionControl(),
             // No SET LOCAL before savepoint SQL: in an aborted transaction it would fail and block the recovery.
-            self::KIND_SAVEPOINT, self::KIND_PASSTHROUGH => $operation(),
+            self::KIND_SAVEPOINT, self::KIND_PASSTHROUGH => $this->runExpectingServerTransaction(
+                $this->inTransaction,
+                $operation,
+            ),
             self::KIND_ROLLBACK_TO => $this->runRollbackToSavepoint($operation),
         };
     }
@@ -216,11 +232,39 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
     private function runRollbackToSavepoint(Closure $operation): mixed
     {
         try {
-            return $operation();
+            return $this->runExpectingServerTransaction($this->inTransaction, $operation);
         } finally {
             // A SET LOCAL issued after the savepoint is undone with it, so re-apply before the next query.
             $this->isAppliedSchemaKnown = false;
         }
+    }
+
+    /**
+     * Runs a statement and checks that it left the server transaction status as expected. A mismatch means
+     * transaction control that the classification did not detect: the statement already ran, but nothing else
+     * runs on a connection whose transaction state no longer matches DBAL.
+     *
+     * @template T
+     *
+     * @param Closure(): T $operation
+     *
+     * @return T
+     */
+    private function runExpectingServerTransaction(bool $expected, Closure $operation): mixed
+    {
+        $result = $operation();
+
+        if (($this->isServerInTransaction)() === $expected) {
+            return $result;
+        }
+
+        if ($expected) {
+            $this->isAppliedSchemaKnown = false;
+        } else {
+            $this->rollBackQuietly();
+        }
+
+        throw TransactionSearchPathModeException::rawTransactionControl();
     }
 
     /**
@@ -235,7 +279,12 @@ final class TransactionSearchPathConnection extends AbstractConnectionMiddleware
             return $this->classifyStatement(ltrim($sql));
         }
 
-        $code = (string) preg_replace(self::NON_CODE_PATTERN, ' ', $sql);
+        $code = preg_replace(self::NON_CODE_PATTERN, ' ', $sql);
+
+        // Fail closed: a PCRE limit error or leftover delimiters mean the statements cannot be split reliably.
+        if ($code === null || preg_match(self::UNBALANCED_PATTERN, $code) !== 0) {
+            throw TransactionSearchPathModeException::unclassifiableSql();
+        }
         $statements = array_values(array_filter(
             array_map(trim(...), explode(';', $code)),
             static fn (string $statement): bool => $statement !== '',

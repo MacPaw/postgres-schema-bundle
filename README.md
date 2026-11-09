@@ -106,6 +106,11 @@ In transaction mode:
   with `TransactionSearchPathModeException`, as is any of it in a prepared statement or batched with other
   statements. A single savepoint statement (`SAVEPOINT`, `RELEASE`, `ROLLBACK TO`), which DBAL uses for nested
   transactions, runs as is.
+- The SQL check fails closed. SQL with `;` or a leading comment that cannot be split reliably (unbalanced quotes,
+  comments or dollar quotes, or a PCRE limit error) is rejected; send such statements one by one. After every
+  statement the server transaction status (`PDO::inTransaction()`) is compared with the expected one: if transaction
+  control slipped past the check, the connection rolls back a transaction it left open and throws, and refuses
+  further statements in a DBAL transaction that the server no longer has.
 - The mode is applied when a physical connection opens. An idle connection opened in the other mode is reopened;
   changing the mode while a transaction is open throws `TransactionSearchPathModeException`. Set the mode in
   `Kernel::boot()` before running queries: statements prepared before the switch keep the old mode.

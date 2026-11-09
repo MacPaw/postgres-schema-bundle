@@ -49,6 +49,7 @@ final class TransactionSearchPathDriver extends AbstractDriverMiddleware
             $connection,
             $this->schemaProvider,
             $this->onApply,
+            $native->inTransaction(...),
         );
     }
 }

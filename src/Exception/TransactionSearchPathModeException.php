@@ -16,6 +16,14 @@ class TransactionSearchPathModeException extends LogicException
         );
     }
 
+    public static function unclassifiableSql(): self
+    {
+        return new self(
+            'Transaction search_path mode cannot split this SQL into statements reliably '
+            . '(unbalanced quotes, comments or dollar quotes, or a PCRE limit). Send the statements one by one.',
+        );
+    }
+
     public static function modeChangedInTransaction(): self
     {
         return new self(
