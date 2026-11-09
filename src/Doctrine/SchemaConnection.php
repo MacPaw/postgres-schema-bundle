@@ -4,18 +4,73 @@ declare(strict_types=1);
 
 namespace Macpaw\PostgresSchemaBundle\Doctrine;
 
+use Doctrine\Common\EventManager;
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection as DBALConnection;
+use Doctrine\DBAL\Driver;
+use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
+use Macpaw\PostgresSchemaBundle\Doctrine\Middleware\TransactionSearchPathDriver;
+use Macpaw\PostgresSchemaBundle\Exception\TransactionSearchPathModeException;
 use Macpaw\PostgresSchemaBundle\Exception\UnsupportedPlatformException;
 use Macpaw\SchemaContextBundle\Logger\DebugLogger;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Throwable;
 
+/**
+ * @phpstan-import-type Params from DriverManager
+ */
 class SchemaConnection extends DBALConnection
 {
     private static ?BaggageSchemaResolver $schemaResolver = null;
     private static ?DebugLogger $logger = null;
+    private static SearchPathMode $searchPathMode = SearchPathMode::Session;
+    private static ?string $serverDefaultSchema = null;
+    /** Whether the open physical connection was created in transaction mode; null when not connected. */
+    private ?bool $isConnectedInTransactionMode = null;
     private ?string $currentSchema = null;
+
+    /**
+     * @param array<string, mixed> $params
+     * @phpstan-param Params $params
+     */
+    public function __construct(
+        array $params,
+        Driver $driver,
+        ?Configuration $config = null,
+        ?EventManager $eventManager = null,
+    ) {
+        // The mode is decided per physical connection on connect: in Session mode the driver connection is
+        // returned unwrapped, so statements go to the database exactly as before.
+        $driver = new TransactionSearchPathDriver(
+            $driver,
+            self::isTransactionModeActive(...),
+            self::resolveTransactionSearchPath(...),
+            self::logTransactionSearchPath(...),
+        );
+
+        parent::__construct($params, $driver, $config, $eventManager);
+    }
+
+    /**
+     * The mode applies to physical connections opened after the call; an idle open connection is reopened
+     * in the new mode, and switching while a transaction is open throws.
+     *
+     * @param string|null $serverDefaultSchema null (strict, default) applies SET LOCAL to every query, ignoring any
+     *                                         session search_path another client left on the pooled server
+     *                                         connection. A schema name skips SET LOCAL for that schema and relies
+     *                                         on the server default search_path (role/database setting).
+     */
+    public static function setSearchPathMode(SearchPathMode $mode, ?string $serverDefaultSchema = null): void
+    {
+        self::$searchPathMode = $mode;
+        self::$serverDefaultSchema = $serverDefaultSchema;
+    }
+
+    public static function getSearchPathMode(): SearchPathMode
+    {
+        return self::$searchPathMode;
+    }
 
     public static function setSchemaResolver(BaggageSchemaResolver $resolver): void
     {
@@ -29,16 +84,21 @@ class SchemaConnection extends DBALConnection
 
     public function close(): void
     {
-        self::$logger?->logSchemaResetByConnectionClose($this->currentSchema ?? '');
+        if ($this->currentSchema !== null) {
+            self::$logger?->logSchemaResetByConnectionClose($this->currentSchema);
+        }
 
         parent::close();
 
         $this->currentSchema = null;
+        $this->isConnectedInTransactionMode = null;
     }
 
     public function rollBack(): bool
     {
-        self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema ?? '');
+        if ($this->currentSchema !== null) {
+            self::$logger?->logSchemaResetByTransactionRollback($this->currentSchema);
+        }
 
         $result = parent::rollBack();
 
@@ -49,7 +109,29 @@ class SchemaConnection extends DBALConnection
 
     public function connect(): bool
     {
+        $isTransactionMode = self::isTransactionModeActive();
+
+        $isModeChanged = $this->isConnectedInTransactionMode !== null
+            && $this->isConnectedInTransactionMode !== $isTransactionMode;
+
+        if ($isModeChanged) {
+            if ($this->isTransactionActive()) {
+                throw TransactionSearchPathModeException::modeChangedInTransaction();
+            }
+
+            $this->close();
+        }
+
         $isNewConnection = parent::connect();
+        $this->isConnectedInTransactionMode = $isTransactionMode;
+
+        if ($isTransactionMode) {
+            if ($isNewConnection) {
+                $this->ensurePostgreSql();
+            }
+
+            return $isNewConnection;
+        }
 
         if (self::$schemaResolver === null) {
             return $isNewConnection;
@@ -75,6 +157,35 @@ class SchemaConnection extends DBALConnection
         $this->applySearchPath($schema, $isNewConnection);
 
         return $isNewConnection;
+    }
+
+    private static function isTransactionModeActive(): bool
+    {
+        return self::$searchPathMode === SearchPathMode::Transaction && self::$schemaResolver !== null;
+    }
+
+    private static function resolveTransactionSearchPath(): ?string
+    {
+        if (self::$schemaResolver === null) {
+            return null;
+        }
+
+        $schema = self::$schemaResolver->getSchema();
+
+        if (self::$serverDefaultSchema !== null && $schema === self::$serverDefaultSchema) {
+            return null;
+        }
+
+        return '"' . str_replace('"', '""', $schema) . '"';
+    }
+
+    /**
+     * @param bool $isCallerTransaction true when SET LOCAL runs in a transaction opened by the caller,
+     *                                  false when the bundle wraps a single statement in its own transaction
+     */
+    private static function logTransactionSearchPath(string $quotedSchema, bool $isCallerTransaction): void
+    {
+        self::$logger?->logApplySearchPath($quotedSchema, false, $isCallerTransaction);
     }
 
     private function getActualSearchPath(): ?string

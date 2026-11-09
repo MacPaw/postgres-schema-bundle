@@ -6,6 +6,8 @@ namespace Macpaw\PostgresSchemaBundle\Command\Doctrine;
 
 use Doctrine\DBAL\Connection;
 use Error;
+use Macpaw\PostgresSchemaBundle\Doctrine\SchemaConnection;
+use Macpaw\PostgresSchemaBundle\Doctrine\SearchPathMode;
 use Macpaw\SchemaContextBundle\Service\BaggageSchemaResolver;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -56,6 +58,11 @@ abstract class AbstractDoctrineSchemaCommand extends Command
     protected function switchToSchema(string $schema): void
     {
         $this->schemaResolver->setSchema($schema);
+
+        if (SchemaConnection::getSearchPathMode() === SearchPathMode::Transaction) {
+            return;
+        }
+
         $quotedSchema = $this->connection->quoteIdentifier($schema);
 
         $this->connection->executeStatement("SET search_path TO {$quotedSchema}");

@@ -8,6 +8,8 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +49,48 @@ jobs:
             doctrine-migrations: '^3.6'
             doctrine-fixtures-bundle: '^3.5'
             coverage: xdebug
+          - description: 'PostgreSQL 18'
+            php: '8.4'
+            symfony-versions: '7.4.*'
+            doctrine-orm-versions: '^3.0'
+            doctrine-migrations: '3.9.*'
+            doctrine-fixtures-bundle: '4.0.*'
+            coverage: 'none'
+            postgres: '18'
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres || '14' }}-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+          POSTGRES_INITDB_ARGS: --auth=scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+      pgbouncer:
+        image: edoburu/pgbouncer:v1.24.1-p1
+        env:
+          DB_HOST: postgres
+          DB_USER: app
+          DB_PASSWORD: app
+          DB_NAME: app
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          DEFAULT_POOL_SIZE: 1
+          MAX_PREPARED_STATEMENTS: 200
+        ports:
+          - 6432:5432
+
+    env:
+      DIRECT_DATABASE_URL: pgsql://app:app@127.0.0.1:5432/app
+      PGBOUNCER_DATABASE_URL: pgsql://app:app@127.0.0.1:6432/app
 
     name: PHP ${{ matrix.php }} Symfony ${{ matrix.symfony-versions }} Doctrine ${{ matrix.doctrine-orm-versions }} Doctrine migrations ${{ matrix.doctrine-migrations }} Doctrine fixtures bundle ${{ matrix.doctrine-fixtures-bundle }} ${{ matrix.description }}
     steps:
@@ -62,6 +106,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
+          extensions: pdo_pgsql
           coverage: xdebug
 
       - name: Add PHPUnit matcher
@@ -90,16 +135,82 @@ jobs:
       - name: Install dependencies
         run: composer install
 
+      - name: Wait for PgBouncer
+        run: timeout 60 sh -c 'until pg_isready -h 127.0.0.1 -p 6432 -U app; do sleep 1; done'
+
       - name: Run PHPUnit tests
-        run: vendor/bin/phpunit
+        run: vendor/bin/phpunit --fail-on-skipped
         if: matrix.coverage == 'none'
 
       - name: PHPUnit tests and Log Code coverage
-        run: vendor/bin/phpunit --coverage-clover=coverage.xml
+        run: vendor/bin/phpunit --fail-on-skipped --coverage-clover=coverage.xml
         if: matrix.coverage == 'xdebug'
+
+      - name: Generate code coverage status
+        id: code-coverage-analyze
+        if: matrix.coverage == 'xdebug'
+        run: |
+          exit_code=0
+          coverage_result="$(vendor/bin/coverage-check coverage.xml "${MIN_CODE_COVERAGE}")" || exit_code=$?
+          echo "${coverage_result}"
+          echo "analyze-text=${coverage_result}" >> "${GITHUB_OUTPUT}"
+          exit "${exit_code}"
+        env:
+          MIN_CODE_COVERAGE: 80
+
+      - name: Prepare code coverage comment
+        if: always() && matrix.coverage == 'xdebug' && steps.code-coverage-analyze.outputs.analyze-text
+        run: |
+          {
+            echo "[postgres-schema-bundle] (PHP ${MATRIX_PHP}, Symfony ${MATRIX_SYMFONY}) ${STATUS_ICON} ${ANALYZE_TEXT}"
+            echo "${STATUS_TEXT}"
+          } > coverage-comment.md
+        env:
+          MATRIX_PHP: ${{ matrix.php }}
+          MATRIX_SYMFONY: ${{ matrix.symfony-versions }}
+          ANALYZE_TEXT: ${{ steps.code-coverage-analyze.outputs.analyze-text }}
+          STATUS_ICON: ${{ steps.code-coverage-analyze.outcome == 'success' && '✅' || '❌' }}
+          STATUS_TEXT: >-
+            ${{ steps.code-coverage-analyze.outcome == 'success'
+            && 'Well done, sailor! 🚣'
+            || 'Please add more tests to your functionality :man_shrugging:' }}
+
+      - name: Upload code coverage comment
+        if: always() && matrix.coverage == 'xdebug' && steps.code-coverage-analyze.outputs.analyze-text
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-comment
+          path: coverage-comment.md
+          retention-days: 1
 
       - name: Upload coverage reports to Codecov
         if: matrix.coverage == 'xdebug'
         uses: codecov/codecov-action@v4.0.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  coverage-comment:
+    name: Code coverage comment
+    needs: run
+    if: >-
+      always()
+      && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download code coverage comment
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-comment
+
+      - name: Create code coverage comment
+        if: steps.download.outcome == 'success'
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3.12.0
+        with:
+          message-id: code-coverage-comment
+          refresh-message-position: true
+          message-path: coverage-comment.md
