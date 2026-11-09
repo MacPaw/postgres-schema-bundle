@@ -243,7 +243,10 @@ final class SearchPathPgbouncerTest extends TestCase
             }
         }
 
+        // The safety net throws the same exception after an undetected COMMIT already ran the rest of the batch,
+        // so check both schemas: the batch must be rejected before anything is sent.
         self::assertSame(0, $this->countDirect(self::PREVIEW_SCHEMA, 'batch'));
+        self::assertSame(0, $this->countDirect('public', 'batch'));
         self::assertSame(self::PREVIEW_MARKER, $preview->fetchOne(self::MARKER_QUERY));
     }
 
